@@ -10,28 +10,41 @@
 <body>
   <div class="container">
     <header>
-      <div class="logo">
-        <img src="/static/favicon.svg" alt="logo" width="26" height="26" style="vertical-align: middle;">
-        <h1>utrack</h1>
-        <span class="badge">Sway IPC</span>
+      <div class="header-top">
+        <div class="logo">
+          <img src="/static/favicon.svg" alt="logo" width="26" height="26">
+          <h1>utrack</h1>
+          <span class="badge">Sway IPC</span>
+        </div>
+        <div class="header-actions">
+          <button id="theme-toggle" class="btn-icon" title="Toggle dark/light theme">🌙</button>
+        </div>
       </div>
-      <div class="controls">
-        <div class="btn-group">
-          <button data-range="today" class="active">Today</button>
-          <button data-range="yesterday">Yesterday</button>
-          <button data-range="week">7 Days</button>
-          <button data-range="all">All</button>
+
+      <!-- Controls Toolbar (Intervals & Actions on single unified row below header) -->
+      <div class="controls-toolbar">
+        <div class="controls-left">
+          <div class="btn-group">
+            <button data-range="today" class="active">Today</button>
+            <button data-range="yesterday">Yesterday</button>
+            <button data-range="week">7 Days</button>
+            <button data-range="all">All</button>
+          </div>
+          <div class="custom-range">
+            <input type="date" id="date-from" autocomplete="off">
+            <span>–</span>
+            <input type="date" id="date-to" autocomplete="off">
+            <button id="apply-custom-date">Filter</button>
+          </div>
         </div>
-        <div class="custom-range">
-          <input type="date" id="date-from">
-          <span>–</span>
-          <input type="date" id="date-to">
-          <button id="apply-custom-date">Filter</button>
+
+        <div class="controls-right">
+          <span id="date-display-badge" class="date-range-badge"></span>
+          <button id="btn-refresh">↻ Refresh</button>
+          <label class="checkbox-label">
+            <input type="checkbox" id="auto-refresh-toggle"> Auto (10s)
+          </label>
         </div>
-        <button id="btn-refresh">↻ Refresh</button>
-        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted); cursor:pointer;">
-          <input type="checkbox" id="auto-refresh-toggle"> Auto (10s)
-        </label>
       </div>
     </header>
 

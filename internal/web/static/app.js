@@ -3,6 +3,8 @@
     range: 'today',
     fromUnix: 0,
     toUnix: 0,
+    fromDate: null,
+    toDate: null,
     apps: [],
     timeline: [],
     expandedApps: new Set(),
@@ -33,6 +35,26 @@
     return `${hrs}h ${remMins}m`;
   }
 
+  function formatDateDMY(d) {
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  function updateDateBadge() {
+    const badge = document.getElementById('date-display-badge');
+    if (!badge || !state.fromDate || !state.toDate) return;
+
+    const fromStr = formatDateDMY(state.fromDate);
+    const toStr = formatDateDMY(state.toDate);
+    if (fromStr === toStr) {
+      badge.textContent = fromStr;
+    } else {
+      badge.textContent = `${fromStr} – ${toStr}`;
+    }
+  }
+
   function calculateTimestamps(preset) {
     const now = new Date();
     let from, to;
@@ -51,8 +73,16 @@
       to = new Date(now.getFullYear() + 1, 0, 1);
     }
 
+    state.fromDate = from;
+    state.toDate = to;
     state.fromUnix = Math.floor(from.getTime() / 1000);
     state.toUnix = Math.floor(to.getTime() / 1000);
+
+    // Clear custom date inputs on preset switch
+    document.getElementById('date-from').value = '';
+    document.getElementById('date-to').value = '';
+
+    updateDateBadge();
   }
 
   async function loadData() {
@@ -210,6 +240,31 @@
     return div.innerHTML;
   }
 
+  function initTheme() {
+    const saved = localStorage.getItem('utrack-theme') || 'dark';
+    applyTheme(saved);
+
+    const toggleBtn = document.getElementById('theme-toggle');
+    if (toggleBtn) {
+      toggleBtn.onclick = () => {
+        const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+        applyTheme(isLight ? 'dark' : 'light');
+      };
+    }
+  }
+
+  function applyTheme(theme) {
+    const toggleBtn = document.getElementById('theme-toggle');
+    if (theme === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+      if (toggleBtn) toggleBtn.textContent = '☀️';
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      if (toggleBtn) toggleBtn.textContent = '🌙';
+    }
+    localStorage.setItem('utrack-theme', theme);
+  }
+
   // Event handlers
   document.querySelectorAll('button[data-range]').forEach(btn => {
     btn.onclick = () => {
@@ -229,8 +284,11 @@
     document.querySelectorAll('button[data-range]').forEach(b => b.classList.remove('active'));
     const from = new Date(fromVal + 'T00:00:00');
     const to = new Date(toVal + 'T23:59:59');
+    state.fromDate = from;
+    state.toDate = to;
     state.fromUnix = Math.floor(from.getTime() / 1000);
     state.toUnix = Math.floor(to.getTime() / 1000);
+    updateDateBadge();
     loadData();
   };
 
@@ -254,7 +312,8 @@
     drawTimelineCanvas();
   });
 
-  // Init
+  // Initialization
+  initTheme();
   calculateTimestamps('today');
   loadData();
 })();
