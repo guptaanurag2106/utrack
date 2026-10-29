@@ -1,0 +1,12 @@
+# External / Reference folders to ignore
+sway-timetracker/
+
+# Binaries
+/utrack
+*.exe
+
+# Database & runtime files
+*.db
+*.db-shm
+*.db-wal
+*.lock

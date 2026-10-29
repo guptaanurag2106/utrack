@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>utrack — Sway Activity Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <h1>utrack</h1>
+        <span class="badge">Sway IPC</span>
+      </div>
+      <div class="controls">
+        <div class="btn-group">
+          <button data-range="today" class="active">Today</button>
+          <button data-range="yesterday">Yesterday</button>
+          <button data-range="week">7 Days</button>
+          <button data-range="all">All</button>
+        </div>
+        <div class="custom-range">
+          <input type="date" id="date-from">
+          <span>–</span>
+          <input type="date" id="date-to">
+          <button id="apply-custom-date">Filter</button>
+        </div>
+        <button id="btn-refresh">↻ Refresh</button>
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted); cursor:pointer;">
+          <input type="checkbox" id="auto-refresh-toggle"> Auto (10s)
+        </label>
+      </div>
+    </header>
+
+    <!-- Top Summary Statistics Cards -->
+    <section class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-title">Total Active Time</div>
+        <div class="stat-value" id="stat-total-time">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Applications Tracked</div>
+        <div class="stat-value" id="stat-app-count">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Most Active App</div>
+        <div class="stat-value" id="stat-top-app" style="font-size:18px; word-break:break-all;">—</div>
+      </div>
+    </section>
+
+    <!-- Main Content: Applications vs Titles Drilldown -->
+    <div class="content-grid">
+      <div class="panel">
+        <div class="panel-header">Applications by Time</div>
+        <div class="panel-body" id="app-list">
+          <div class="empty-state">Loading activities...</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header" id="title-panel-header">Window Titles</div>
+        <div class="panel-body" id="title-list">
+          <div class="empty-state">Select an application on the left to see window title breakdown.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline Horizontal Visualizer -->
+    <section class="timeline-section">
+      <div class="timeline-bar-wrapper">
+        <div style="font-weight:600; margin-bottom:12px; font-size:13px; color:var(--text-muted);">Session Activity Distribution</div>
+        <div class="canvas-container">
+          <canvas id="timeline-canvas"></canvas>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
