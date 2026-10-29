@@ -1,0 +1,9 @@
+{
+  "rules": [
+    { "pattern": "(?i)youtube music", "label": "YouTube Music" },
+    { "pattern": "(?i)youtube", "label": "YouTube" },
+    { "pattern": "(?i)google( search)?", "label": "Google Search" },
+    { "pattern": "(?i)reddit", "label": "Reddit" },
+    { "pattern": "(?i)stack\\s*overflow", "label": "Stack Overflow" },
+  ]
+}
