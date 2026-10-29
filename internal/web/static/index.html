@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>utrack — Sway Activity Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="container">
     <header>
       <div class="logo">
+        <img src="/static/favicon.svg" alt="logo" width="26" height="26" style="vertical-align: middle;">
         <h1>utrack</h1>
         <span class="badge">Sway IPC</span>
       </div>
@@ -49,20 +51,14 @@
       </div>
     </section>
 
-    <!-- Main Content: Applications vs Titles Drilldown -->
-    <div class="content-grid">
-      <div class="panel">
-        <div class="panel-header">Applications by Time</div>
-        <div class="panel-body" id="app-list">
-          <div class="empty-state">Loading activities...</div>
-        </div>
+    <!-- Unified Applications with Collapsible Title Drilldowns -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>Tracked Applications</span>
+        <span style="font-size:12px; font-weight:normal; color:var(--text-muted);">Click an app to expand/collapse window titles</span>
       </div>
-
-      <div class="panel">
-        <div class="panel-header" id="title-panel-header">Window Titles</div>
-        <div class="panel-body" id="title-list">
-          <div class="empty-state">Select an application on the left to see window title breakdown.</div>
-        </div>
+      <div class="panel-body" id="app-list">
+        <div class="empty-state">Loading activities...</div>
       </div>
     </div>
 

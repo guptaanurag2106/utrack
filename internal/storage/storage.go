@@ -104,6 +104,15 @@ func initSchema(db *sql.DB) error {
 	return err
 }
 
+// TruncateActivities deletes all tracked activity records and vacuums the database.
+func (d *DB) TruncateActivities() error {
+	_, err := d.db.Exec("DELETE FROM activities; VACUUM;")
+	if err != nil {
+		return fmt.Errorf("truncate activities: %w", err)
+	}
+	return nil
+}
+
 // Close closes the database connection.
 func (d *DB) Close() error {
 	if d.db != nil {

@@ -24,13 +24,15 @@ It tracks active focused applications and window titles with zero CPU polling vi
      - `utrack daemon`: Runs the background listener and records intervals into SQLite.
      - `utrack web [--port 8080]`: On-demand local web server with embedded UI. Exits on `Ctrl+C`.
      - `utrack status`: Quick CLI status check (daemon running/stopped, current active window).
+     - `utrack clear [--force]`: Clears all tracked activities from SQLite.
 
 ## File Structure
-- `cmd/utrack/main.go`: CLI entrypoint (subcommands: `daemon`, `web`, `status`).
+- `cmd/utrack/main.go`: CLI entrypoint (subcommands: `daemon`, `web`, `status`, `clear`).
 - `internal/ipc/`: Zero-dependency Sway IPC client (event subscription, tree query, message framing).
+- `internal/rules/`: Window title regex categorization and grouping (`~/.config/utrack/rules.json`).
 - `internal/storage/`: SQLite connection, migrations, WAL mode setup, interval write operations, query aggregations.
 - `internal/tracker/`: State machine handling window focus transitions, title debouncing, and interval closing.
-- `internal/web/`: Embedded HTTP server, REST endpoints, and vanilla JS/CSS frontend.
+- `internal/web/`: Embedded HTTP server, REST endpoints, and vanilla JS/CSS frontend with collapsible title accordions.
 - `internal/lock/`: Process single-instance lock via `flock`.
 
 ## Environment & Paths

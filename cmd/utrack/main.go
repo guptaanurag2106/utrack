@@ -44,6 +44,8 @@ func main() {
 		runWeb(os.Args[2:])
 	case "status":
 		runStatus()
+	case "clear":
+		runClear(os.Args[2:])
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -63,6 +65,7 @@ Commands:
   daemon          Run the background activity tracking daemon
   web [--port P]  Launch the local dashboard web interface (default port: 8080)
   status          Show current tracker status and today's summary
+  clear [--force] Clear all stored activity logs from the database
   help            Show this help text`)
 }
 
@@ -238,4 +241,37 @@ func formatDuration(s int64) string {
 	h := m / 60
 	m = m % 60
 	return fmt.Sprintf("%dh %dm", h, m)
+}
+
+func runClear(args []string) {
+	fs := flag.NewFlagSet("clear", flag.ExitOnError)
+	force := fs.Bool("force", false, "Bypass confirmation prompt")
+	fs.BoolVar(force, "f", false, "Bypass confirmation prompt (shorthand)")
+	_ = fs.Parse(args)
+
+	if !*force {
+		fmt.Print("Warning: This will permanently delete all activity logs. Proceed? [y/N]: ")
+		var resp string
+		_, _ = fmt.Scanln(&resp)
+		if resp != "y" && resp != "Y" && resp != "yes" {
+			fmt.Println("Aborted.")
+			return
+		}
+	}
+
+	dbPath, err := storage.GetDefaultDBPath()
+	if err != nil {
+		log.Fatalf("[clear] resolve db path: %v", err)
+	}
+
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		log.Fatalf("[clear] open db: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.TruncateActivities(); err != nil {
+		log.Fatalf("[clear] failed: %v", err)
+	}
+	fmt.Println("Activity history cleared.")
 }

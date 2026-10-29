@@ -3,9 +3,9 @@
     range: 'today',
     fromUnix: 0,
     toUnix: 0,
-    selectedApp: null,
     apps: [],
     timeline: [],
+    expandedApps: new Set(),
     autoRefreshTimer: null
   };
 
@@ -62,19 +62,9 @@
 
       renderStats();
       renderAppList();
-
-      if (state.apps.length > 0) {
-        if (!state.selectedApp || !state.apps.some(a => a.app_id === state.selectedApp)) {
-          state.selectedApp = state.apps[0].app_id;
-        }
-        await loadTitles(state.selectedApp);
-      } else {
-        renderEmptyTitles();
-      }
-
       await loadTimeline();
     } catch (err) {
-      console.error('Failed to load summary data:', err);
+      console.error('Failed to load activity summary:', err);
     }
   }
 
@@ -98,66 +88,76 @@
 
     state.apps.forEach(app => {
       const pct = Math.round((app.duration_s / totalSecs) * 100);
-      const item = document.createElement('div');
-      item.className = 'app-item' + (app.app_id === state.selectedApp ? ' selected' : '');
-      item.onclick = () => {
-        state.selectedApp = app.app_id;
-        document.querySelectorAll('.app-item').forEach(el => el.classList.remove('selected'));
-        item.classList.add('selected');
-        loadTitles(app.app_id);
-      };
+      const isExpanded = state.expandedApps.has(app.app_id);
 
-      item.innerHTML = `
-        <div class="app-info">
-          <span class="app-name">${escapeHtml(app.app_id)}</span>
+      const item = document.createElement('div');
+      item.className = 'app-item' + (isExpanded ? ' expanded' : '');
+
+      const row = document.createElement('div');
+      row.className = 'app-row';
+      row.innerHTML = `
+        <div class="app-main">
+          <div class="app-title-group">
+            <span class="toggle-icon">▶</span>
+            <span class="app-name">${escapeHtml(app.app_id)}</span>
+          </div>
           <span class="app-time">${formatDuration(app.duration_s)} (${pct}%)</span>
         </div>
         <div class="progress-track">
           <div class="progress-fill" style="width: ${pct}%; background-color: ${getAppColor(app.app_id)}"></div>
         </div>
       `;
+
+      const collapse = document.createElement('div');
+      collapse.className = 'app-titles-collapse';
+      collapse.id = `titles-${encodeURIComponent(app.app_id)}`;
+
+      row.onclick = async () => {
+        const currentlyExpanded = item.classList.contains('expanded');
+        if (currentlyExpanded) {
+          item.classList.remove('expanded');
+          state.expandedApps.delete(app.app_id);
+        } else {
+          item.classList.add('expanded');
+          state.expandedApps.add(app.app_id);
+          await fetchTitlesForApp(app.app_id, collapse);
+        }
+      };
+
+      item.appendChild(row);
+      item.appendChild(collapse);
       container.appendChild(item);
+
+      if (isExpanded) {
+        fetchTitlesForApp(app.app_id, collapse);
+      }
     });
   }
 
-  async function loadTitles(appId) {
-    const titlePanelHeader = document.getElementById('title-panel-header');
-    titlePanelHeader.textContent = `Titles: ${appId}`;
-
+  async function fetchTitlesForApp(appId, containerEl) {
+    containerEl.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:6px 0;">Loading window titles...</div>';
     try {
       const res = await fetch(`/api/app-titles?app=${encodeURIComponent(appId)}&from=${state.fromUnix}&to=${state.toUnix}`);
       const titles = await res.json() || [];
-      renderTitles(titles);
+
+      if (titles.length === 0) {
+        containerEl.innerHTML = '<div style="color:var(--text-muted); font-size:12px; padding:6px 0;">No titles recorded.</div>';
+        return;
+      }
+
+      containerEl.innerHTML = '';
+      titles.forEach(t => {
+        const row = document.createElement('div');
+        row.className = 'title-row';
+        row.innerHTML = `
+          <span class="title-name" title="${escapeHtml(t.title)}">${escapeHtml(t.title || '(unnamed)')}</span>
+          <span class="title-time">${formatDuration(t.duration_s)}</span>
+        `;
+        containerEl.appendChild(row);
+      });
     } catch (err) {
-      console.error('Failed to load titles:', err);
+      containerEl.innerHTML = '<div style="color:var(--accent-red); font-size:12px;">Failed to load titles.</div>';
     }
-  }
-
-  function renderTitles(titles) {
-    const container = document.getElementById('title-list');
-    container.innerHTML = '';
-
-    if (titles.length === 0) {
-      container.innerHTML = '<div class="empty-state">No window titles recorded for this app.</div>';
-      return;
-    }
-
-    titles.forEach(t => {
-      const item = document.createElement('div');
-      item.className = 'title-item';
-      item.innerHTML = `
-        <div class="title-header">
-          <span class="title-text">${escapeHtml(t.title || '(unnamed)')}</span>
-          <span class="title-dur">${formatDuration(t.duration_s)}</span>
-        </div>
-      `;
-      container.appendChild(item);
-    });
-  }
-
-  function renderEmptyTitles() {
-    document.getElementById('title-panel-header').textContent = 'Window Titles';
-    document.getElementById('title-list').innerHTML = '<div class="empty-state">Select an application to inspect titles.</div>';
   }
 
   async function loadTimeline() {
@@ -185,7 +185,7 @@
     if (state.timeline.length === 0) {
       ctx.fillStyle = '#9aa5b5';
       ctx.font = '12px sans-serif';
-      ctx.fillText('No timeline data available', 16, 28);
+      ctx.fillText('No timeline data available for this range', 16, 28);
       return;
     }
 

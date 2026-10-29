@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"sort"
+	"utrack/internal/rules"
 	"utrack/internal/storage"
 )
 
@@ -18,8 +20,9 @@ var staticFS embed.FS
 
 // Server hosts the on-demand local dashboard.
 type Server struct {
-	db   *storage.DB
-	port int
+	db    *storage.DB
+	rules *rules.Config
+	port  int
 }
 
 // NewServer initializes a dashboard HTTP server.
@@ -28,8 +31,9 @@ func NewServer(db *storage.DB, port int) *Server {
 		port = 8080
 	}
 	return &Server{
-		db:   db,
-		port: port,
+		db:    db,
+		rules: rules.Load(),
+		port:  port,
 	}
 }
 
@@ -81,12 +85,27 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAppTitles(w http.ResponseWriter, r *http.Request) {
 	appID := r.URL.Query().Get("app")
 	from, to := parseRange(r)
-	titles, err := s.db.GetAppTitles(appID, from, to)
+	rawTitles, err := s.db.GetAppTitles(appID, from, to)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, titles)
+
+	grouped := make(map[string]int64)
+	for _, t := range rawTitles {
+		label := s.rules.CategorizeTitle(appID, t.Title)
+		grouped[label] += t.DurationS
+	}
+
+	result := make([]storage.TitleSummary, 0, len(grouped))
+	for label, dur := range grouped {
+		result = append(result, storage.TitleSummary{Title: label, DurationS: dur})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].DurationS > result[j].DurationS
+	})
+
+	writeJSON(w, result)
 }
 
 func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {

@@ -70,4 +70,16 @@ func TestStorageOperations(t *testing.T) {
 	if timeline[0].AppID != "org.mozilla.firefox" || timeline[1].AppID != "foot" {
 		t.Errorf("unexpected timeline ordering: %+v", timeline)
 	}
+
+	// 4. Test Truncate
+	if err := db.TruncateActivities(); err != nil {
+		t.Fatalf("truncate activities failed: %v", err)
+	}
+	clearedSummary, err := db.GetSummary(fromUnix, toUnix)
+	if err != nil {
+		t.Fatalf("get summary after truncate failed: %v", err)
+	}
+	if len(clearedSummary) != 0 {
+		t.Errorf("expected 0 items after truncate, got %d", len(clearedSummary))
+	}
 }
