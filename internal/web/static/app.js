@@ -62,7 +62,7 @@
     }
   }
 
-  function calculateTimestamps(preset) {
+  async function calculateTimestamps(preset) {
     const now = new Date();
     let from, to;
 
@@ -73,11 +73,22 @@
       from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0);
       to = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59);
     } else if (preset === 'week') {
-      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0);
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0);
       to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     } else if (preset === 'all') {
-      from = new Date(2000, 0, 1);
-      to = new Date(now.getFullYear() + 1, 0, 1);
+      try {
+        const bRes = await fetch('/api/bounds');
+        const bounds = await bRes.json();
+        if (bounds && bounds.min_time > 0) {
+          const minDate = new Date(bounds.min_time * 1000);
+          from = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate(), 0, 0, 0);
+        } else {
+          from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0);
+        }
+      } catch (e) {
+        from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0);
+      }
+      to = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     }
 
     state.fromDate = from;
@@ -108,10 +119,9 @@
 
   async function loadDailyBreakdown() {
     const dailyPanel = document.getElementById('daily-panel');
-    const container = document.getElementById('daily-list');
-    if (!dailyPanel || !container) return;
+    if (!dailyPanel) return;
 
-    // Show daily breakdown panel when span is longer than 1 day (e.g. 7 days, all, or multi-day custom)
+    // Show daily breakdown panel when span is longer than 1 day
     const isMultiDay = (state.toUnix - state.fromUnix) > 90000;
     if (!isMultiDay) {
       dailyPanel.style.display = 'none';
@@ -123,36 +133,93 @@
     try {
       const res = await fetch(`/api/daily?from=${state.fromUnix}&to=${state.toUnix}`);
       state.daily = await res.json() || [];
-
-      container.innerHTML = '';
-      if (state.daily.length === 0) {
-        container.innerHTML = '<div class="empty-state">No daily data available for this range.</div>';
-        return;
-      }
-
-      const maxDur = Math.max(...state.daily.map(d => d.duration_s), 1);
-
-      state.daily.slice().reverse().forEach(d => {
-        const pct = Math.round((d.duration_s / maxDur) * 100);
-        const parts = d.date.split('-');
-        const dateFormatted = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d.date;
-
-        const row = document.createElement('div');
-        row.className = 'daily-row';
-        row.innerHTML = `
-          <div class="daily-meta">
-            <span class="daily-date">${dateFormatted}</span>
-            <span class="daily-duration">${formatDuration(d.duration_s)}</span>
-          </div>
-          <div class="progress-track" style="margin-left:0;">
-            <div class="progress-fill" style="width: ${pct}%; background-color: var(--accent);"></div>
-          </div>
-        `;
-        container.appendChild(row);
-      });
+      drawDailyChartCanvas();
     } catch (err) {
       console.error('Failed to load daily breakdown:', err);
     }
+  }
+
+  function drawDailyChartCanvas() {
+    const canvas = document.getElementById('daily-chart-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.parentElement.clientWidth;
+    const height = 180;
+    canvas.width = width * window.devicePixelRatio;
+    canvas.height = height * window.devicePixelRatio;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (state.daily.length === 0) {
+      ctx.fillStyle = '#9aa5b5';
+      ctx.font = '12px sans-serif';
+      ctx.fillText('No daily data available for this range', 16, height / 2);
+      return;
+    }
+
+    const padding = { top: 20, right: 20, bottom: 30, left: 45 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    // Convert seconds to hours for Y-axis
+    const maxHours = Math.max(...state.daily.map(d => d.duration_s / 3600), 4);
+    const yMax = Math.ceil(maxHours * 1.15);
+
+    // Draw horizontal grid lines & Y-axis labels
+    ctx.font = '10px "JetBrains Mono", monospace, sans-serif';
+    ctx.textAlign = 'right';
+    const gridSteps = 4;
+    for (let i = 0; i <= gridSteps; i++) {
+      const val = (yMax / gridSteps) * i;
+      const y = padding.top + chartH - (val / yMax) * chartH;
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(width - padding.right, y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#6b778c';
+      ctx.fillText(`${val.toFixed(1)}h`, padding.left - 8, y + 3);
+    }
+
+    // Draw vertical bars
+    const n = state.daily.length;
+    const colW = chartW / n;
+    const barW = Math.max(8, Math.min(colW * 0.65, 42));
+
+    state.daily.forEach((d, idx) => {
+      const hrs = d.duration_s / 3600;
+      const barH = (hrs / yMax) * chartH;
+      const x = padding.left + idx * colW + (colW - barW) / 2;
+      const y = padding.top + chartH - barH;
+
+      // Bar rounded top
+      ctx.fillStyle = '#5e81ac';
+      const r = Math.min(4, barW / 2);
+      ctx.beginPath();
+      ctx.moveTo(x, y + barH);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.lineTo(x + barW - r, y);
+      ctx.quadraticCurveTo(x + barW, y, x + barW, y + r);
+      ctx.lineTo(x + barW, y + barH);
+      ctx.closePath();
+      ctx.fill();
+
+      // Top value label
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#88c0d0';
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.fillText(formatDuration(d.duration_s), x + barW / 2, y - 6);
+
+      // Bottom date label
+      const parts = d.date.split('-');
+      const dateLabel = parts.length === 3 ? `${parts[2]}/${parts[1]}` : d.date;
+      ctx.fillStyle = '#9aa5b5';
+      ctx.fillText(dateLabel, x + barW / 2, height - 10);
+    });
   }
 
   function renderStats() {
@@ -320,9 +387,9 @@
       // Multi-day view: calculate appropriate day step so labels don't collide
       const totalDays = Math.ceil(span / 86400);
       let dayStep = 1;
-      if (totalDays > 30) dayStep = 7;
-      else if (totalDays > 14) dayStep = 3;
-      else if (totalDays > 7) dayStep = 2;
+      if (totalDays > 45) dayStep = 7;
+      else if (totalDays > 21) dayStep = 3;
+      else if (totalDays > 12) dayStep = 2;
 
       const startDate = new Date(tStart * 1000);
       let cur = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0);
@@ -379,11 +446,11 @@
 
   // Event handlers
   document.querySelectorAll('button[data-range]').forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       document.querySelectorAll('button[data-range]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.range = btn.getAttribute('data-range');
-      calculateTimestamps(state.range);
+      await calculateTimestamps(state.range);
       loadData();
     };
   });
@@ -422,10 +489,13 @@
 
   window.addEventListener('resize', () => {
     drawTimelineCanvas();
+    drawDailyChartCanvas();
   });
 
   // Initialization
   initTheme();
-  calculateTimestamps('today');
-  loadData();
+  (async () => {
+    await calculateTimestamps('today');
+    loadData();
+  })();
 })();

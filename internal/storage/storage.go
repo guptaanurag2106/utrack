@@ -194,6 +194,20 @@ func (d *DB) GetAppTitles(appID string, fromUnix, toUnix int64) ([]TitleSummary,
 	return list, rows.Err()
 }
 
+// TimeBounds represents the earliest and latest timestamp of recorded activities.
+type TimeBounds struct {
+	MinTime int64 `json:"min_time"`
+	MaxTime int64 `json:"max_time"`
+}
+
+// GetTimeBounds returns the earliest start_time and latest end_time in activities.
+func (d *DB) GetTimeBounds() (TimeBounds, error) {
+	var bounds TimeBounds
+	row := d.db.QueryRow("SELECT COALESCE(MIN(start_time), 0), COALESCE(MAX(end_time), 0) FROM activities")
+	err := row.Scan(&bounds.MinTime, &bounds.MaxTime)
+	return bounds, err
+}
+
 // GetDailyBreakdown returns aggregated durations grouped by day for a time interval.
 func (d *DB) GetDailyBreakdown(fromUnix, toUnix int64) ([]DailySummary, error) {
 	query := `
