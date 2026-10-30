@@ -18,7 +18,8 @@ const (
 	MsgTypeGetTree    = 4
 
 	// Event window has highest bit set: (1 << 31) | 3 = 0x80000003
-	EventWindowMask = 0x80000003
+	EventWorkspaceMask = 0x80000000
+	EventWindowMask    = 0x80000003
 )
 
 // WindowProperties holds XWayland/X11 window properties if available.
@@ -43,6 +44,12 @@ type Node struct {
 type WindowEvent struct {
 	Change    string `json:"change"`
 	Container Node   `json:"container"`
+}
+
+// WorkspaceEvent is received when subscribing to ["workspace"].
+type WorkspaceEvent struct {
+	Change  string `json:"change"`
+	Current *Node  `json:"current"`
 }
 
 // Client represents a connection to Sway IPC.
@@ -123,9 +130,9 @@ func (c *Client) ReadMessage() (uint32, []byte, error) {
 	return respType, payload, nil
 }
 
-// SubscribeWindows sends a subscription request for ["window"] events.
-func (c *Client) SubscribeWindows() error {
-	payload := []byte(`["window"]`)
+// SubscribeEvents sends a subscription request for ["window", "workspace"] events.
+func (c *Client) SubscribeEvents() error {
+	payload := []byte(`["window", "workspace"]`)
 	respType, resp, err := c.SendMessage(MsgTypeSubscribe, payload)
 	if err != nil {
 		return err
@@ -134,6 +141,11 @@ func (c *Client) SubscribeWindows() error {
 		return fmt.Errorf("unexpected subscribe response type %d: %s", respType, string(resp))
 	}
 	return nil
+}
+
+// FindFocused searches a node tree for the currently focused window.
+func FindFocused(n *Node) *Node {
+	return findFocused(n)
 }
 
 // GetFocusedWindow queries the current tree and returns the currently focused window node.

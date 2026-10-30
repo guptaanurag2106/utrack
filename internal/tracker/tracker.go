@@ -12,6 +12,12 @@ import (
 const (
 	// DefaultTitleDebounce is the duration a new title must remain stable before splitting the interval.
 	DefaultTitleDebounce = 5 * time.Second
+
+	// HeartbeatInterval is the periodic flush interval for active focus.
+	HeartbeatInterval = 60 * time.Second
+
+	// MaxSleepTolerance is the maximum wall-clock jump allowed before concluding the system was sleeping/suspended.
+	MaxSleepTolerance = 90 * time.Second
 )
 
 // Tracker coordinates state tracking between Sway events and SQLite storage.
@@ -22,6 +28,7 @@ type Tracker struct {
 	activeAppID     string
 	activeTitle     string
 	activeStartTime time.Time
+	lastHeartbeat   time.Time
 
 	pendingTitle  string
 	debounceTimer *time.Timer
@@ -30,7 +37,38 @@ type Tracker struct {
 // New creates a new Tracker instance.
 func New(db *storage.DB) *Tracker {
 	return &Tracker{
-		db: db,
+		db:            db,
+		lastHeartbeat: time.Now(),
+	}
+}
+
+// Heartbeat periodically writes elapsed time and detects system suspend/sleep jumps.
+func (t *Tracker) Heartbeat(now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	gap := now.Sub(t.lastHeartbeat)
+	t.lastHeartbeat = now
+
+	// If wall-clock jumped significantly beyond the interval (e.g. system suspended / slept),
+	// clamp the active window's credit so sleep time isn't falsely attributed to the app.
+	if gap > MaxSleepTolerance {
+		log.Printf("[tracker] system sleep detected (gap: %v). Discarding sleep duration.", gap.Round(time.Second))
+		// Flush only up to 1 heartbeat of active time prior to sleep
+		if t.activeAppID != "" && !t.activeStartTime.IsZero() {
+			preSleepEnd := t.activeStartTime.Add(HeartbeatInterval)
+			if preSleepEnd.Before(now) {
+				t.flushLocked(preSleepEnd)
+			}
+		}
+		// Reset start time to now (post-wake)
+		t.activeStartTime = now
+		return
+	}
+
+	// Normal periodic incremental flush
+	if t.activeAppID != "" && !t.activeStartTime.IsZero() {
+		t.flushLocked(now)
 	}
 }
 

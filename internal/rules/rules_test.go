@@ -7,6 +7,8 @@ import (
 )
 
 func TestDefaultCategorization(t *testing.T) {
+	// Set XDG_CONFIG_HOME to nonexistent dir to test defaults isolation
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	cfg := rules.Load()
 
 	tests := []struct {

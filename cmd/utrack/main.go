@@ -107,6 +107,15 @@ func runDaemon() {
 
 	log.Printf("[daemon] utrack daemon started (db: %s, pid: %d)", dbPath, os.Getpid())
 
+	// Periodic heartbeat ticker (flushes every minute and detects suspend/sleep)
+	ticker := time.NewTicker(tracker.HeartbeatInterval)
+	defer ticker.Stop()
+	go func() {
+		for range ticker.C {
+			tr.Heartbeat(time.Now())
+		}
+	}()
+
 	// Daemon event processing loop with auto-reconnect
 	for {
 		err := runListener(tr)
@@ -131,8 +140,8 @@ func runListener(tr *tracker.Tracker) error {
 		log.Printf("[daemon] initial focus: app=%q title=%q", focused.AppName(), focused.Name)
 	}
 
-	if err := client.SubscribeWindows(); err != nil {
-		return fmt.Errorf("subscribe to window events: %w", err)
+	if err := client.SubscribeEvents(); err != nil {
+		return fmt.Errorf("subscribe to window and workspace events: %w", err)
 	}
 
 	for {
@@ -141,21 +150,44 @@ func runListener(tr *tracker.Tracker) error {
 			return fmt.Errorf("read ipc frame: %w", err)
 		}
 
-		if msgType != ipc.EventWindowMask {
-			continue
-		}
-
-		var event ipc.WindowEvent
-		if err := json.Unmarshal(payload, &event); err != nil {
-			continue
-		}
-
 		now := time.Now()
-		switch event.Change {
-		case "focus":
-			tr.OnFocus(event.Container.AppName(), event.Container.Name, now)
-		case "title":
-			tr.OnTitleChange(event.Container.AppName(), event.Container.Name, now)
+
+		switch msgType {
+		case ipc.EventWindowMask:
+			var event ipc.WindowEvent
+			if err := json.Unmarshal(payload, &event); err != nil {
+				continue
+			}
+			switch event.Change {
+			case "focus":
+				tr.OnFocus(event.Container.AppName(), event.Container.Name, now)
+			case "title":
+				tr.OnTitleChange(event.Container.AppName(), event.Container.Name, now)
+			case "close":
+				// If a window closed, verify if active window still exists
+				if focused, err := client.GetFocusedWindow(); err == nil && focused != nil {
+					tr.OnFocus(focused.AppName(), focused.Name, now)
+				} else {
+					tr.OnFocus("", "", now)
+				}
+			}
+
+		case ipc.EventWorkspaceMask:
+			var event ipc.WorkspaceEvent
+			if err := json.Unmarshal(payload, &event); err != nil {
+				continue
+			}
+			if event.Change == "focus" {
+				// Empty workspace check: does the workspace contain any focused window container?
+				if event.Current != nil {
+					if focused := ipc.FindFocused(event.Current); focused != nil {
+						tr.OnFocus(focused.AppName(), focused.Name, now)
+					} else {
+						// Empty workspace selected
+						tr.OnFocus("", "", now)
+					}
+				}
+			}
 		}
 	}
 }

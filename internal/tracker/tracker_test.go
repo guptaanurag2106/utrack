@@ -48,4 +48,27 @@ func TestTrackerTransitions(t *testing.T) {
 	if summary[1].AppID != "foot" || summary[1].DurationS != 50 {
 		t.Errorf("expected foot 50s, got %+v", summary[1])
 	}
+
+	// Step 4: Test Heartbeat & Sleep Jump Detection
+	// Heartbeat after 60s should record normal interval
+	tSleepStart := baseTime.Add(200 * time.Second)
+	tr.OnFocus("foot", "tmux", tSleepStart)
+
+	// Heartbeat 60s later: normal incremental flush
+	tr.Heartbeat(tSleepStart.Add(60 * time.Second))
+
+	// System sleeps for 3 hours (10800s gap)
+	wakeTime := tSleepStart.Add(60*time.Second + 3*time.Hour)
+	tr.Heartbeat(wakeTime) // should detect jump and clamp
+
+	// Verify foot duration: should only have ~50s + 60s + max 60s clamp, NOT 3 hours
+	summaryPostSleep, err := db.GetSummary(baseTime.Add(-10*time.Second).Unix(), wakeTime.Add(10*time.Second).Unix())
+	if err != nil {
+		t.Fatalf("get summary post sleep: %v", err)
+	}
+	for _, app := range summaryPostSleep {
+		if app.AppID == "foot" && app.DurationS > 300 {
+			t.Errorf("foot accumulated sleep time! duration = %d seconds", app.DurationS)
+		}
+	}
 }

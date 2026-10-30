@@ -205,7 +205,7 @@
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const width = canvas.parentElement.clientWidth;
-    const height = 48;
+    const height = 56;
     canvas.width = width * window.devicePixelRatio;
     canvas.height = height * window.devicePixelRatio;
     ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
@@ -215,7 +215,7 @@
     if (state.timeline.length === 0) {
       ctx.fillStyle = '#9aa5b5';
       ctx.font = '12px sans-serif';
-      ctx.fillText('No timeline data available for this range', 16, 28);
+      ctx.fillText('No timeline data available for this range', 16, 26);
       return;
     }
 
@@ -224,14 +224,40 @@
     const span = tEnd - tStart;
     if (span <= 0) return;
 
+    // Draw activity intervals
     state.timeline.forEach(item => {
       const x1 = Math.max(0, ((item.start_time - tStart) / span) * width);
       const x2 = Math.min(width, ((item.end_time - tStart) / span) * width);
       const w = Math.max(2, x2 - x1);
 
       ctx.fillStyle = getAppColor(item.app_id);
-      ctx.fillRect(x1, 8, w, height - 16);
+      ctx.fillRect(x1, 4, w, 28);
     });
+
+    // Draw X-axis 3-hour ticks and labels (00:00, 03:00, 06:00, ..., 24:00)
+    ctx.font = '10px "JetBrains Mono", monospace, sans-serif';
+    ctx.fillStyle = '#9aa5b5';
+    ctx.textAlign = 'center';
+
+    const stepSeconds = 3 * 3600; // 3 hours
+    // Align to the nearest 3-hour boundary
+    const firstTick = Math.ceil(tStart / stepSeconds) * stepSeconds;
+
+    for (let t = firstTick; t <= tEnd; t += stepSeconds) {
+      const x = ((t - tStart) / span) * width;
+      if (x < 0 || x > width) continue;
+
+      // Small tick line
+      ctx.fillStyle = '#444d5c';
+      ctx.fillRect(x, 34, 1, 4);
+
+      // Label text
+      const d = new Date(t * 1000);
+      const hrs = String(d.getHours()).padStart(2, '0');
+      const mins = String(d.getMinutes()).padStart(2, '0');
+      ctx.fillStyle = '#9aa5b5';
+      ctx.fillText(`${hrs}:${mins}`, x, 48);
+    }
   }
 
   function escapeHtml(str) {
