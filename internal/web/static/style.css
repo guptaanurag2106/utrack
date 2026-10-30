@@ -392,6 +392,17 @@ input[type="date"] {
   padding: 16px;
 }
 
+.hover-info {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--accent-light);
+  max-width: 65%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .canvas-container {
   width: 100%;
   height: 56px;
