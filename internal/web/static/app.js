@@ -6,23 +6,30 @@
     fromDate: null,
     toDate: null,
     apps: [],
+    daily: [],
     timeline: [],
     expandedApps: new Set(),
     autoRefreshTimer: null
   };
 
-  const appColors = [
+  const appPalette = [
     '#5e81ac', '#88c0d0', '#81a1c1', '#a3be8c',
-    '#ebcb8b', '#d08770', '#b48ead', '#8fbcbb'
+    '#ebcb8b', '#d08770', '#b48ead', '#8fbcbb',
+    '#d8dee9', '#4c566a', '#bf616a', '#eed49f',
+    '#a6da95', '#8aadf4', '#c6a0f6', '#f5bde6'
   ];
 
+  const appColorMap = new Map();
+
   function getAppColor(appName) {
-    let hash = 0;
-    for (let i = 0; i < appName.length; i++) {
-      hash = (hash << 5) - hash + appName.charCodeAt(i);
-      hash |= 0;
+    if (!appName) return '#5e81ac';
+    if (appColorMap.has(appName)) {
+      return appColorMap.get(appName);
     }
-    return appColors[Math.abs(hash) % appColors.length];
+    // Allocate next distinct color from palette based on encounter order
+    const color = appPalette[appColorMap.size % appPalette.length];
+    appColorMap.set(appName, color);
+    return color;
   }
 
   function formatDuration(seconds) {
@@ -92,9 +99,59 @@
 
       renderStats();
       renderAppList();
+      await loadDailyBreakdown();
       await loadTimeline();
     } catch (err) {
       console.error('Failed to load activity summary:', err);
+    }
+  }
+
+  async function loadDailyBreakdown() {
+    const dailyPanel = document.getElementById('daily-panel');
+    const container = document.getElementById('daily-list');
+    if (!dailyPanel || !container) return;
+
+    // Show daily breakdown panel when span is longer than 1 day (e.g. 7 days, all, or multi-day custom)
+    const isMultiDay = (state.toUnix - state.fromUnix) > 90000;
+    if (!isMultiDay) {
+      dailyPanel.style.display = 'none';
+      return;
+    }
+
+    dailyPanel.style.display = 'block';
+
+    try {
+      const res = await fetch(`/api/daily?from=${state.fromUnix}&to=${state.toUnix}`);
+      state.daily = await res.json() || [];
+
+      container.innerHTML = '';
+      if (state.daily.length === 0) {
+        container.innerHTML = '<div class="empty-state">No daily data available for this range.</div>';
+        return;
+      }
+
+      const maxDur = Math.max(...state.daily.map(d => d.duration_s), 1);
+
+      state.daily.slice().reverse().forEach(d => {
+        const pct = Math.round((d.duration_s / maxDur) * 100);
+        const parts = d.date.split('-');
+        const dateFormatted = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d.date;
+
+        const row = document.createElement('div');
+        row.className = 'daily-row';
+        row.innerHTML = `
+          <div class="daily-meta">
+            <span class="daily-date">${dateFormatted}</span>
+            <span class="daily-duration">${formatDuration(d.duration_s)}</span>
+          </div>
+          <div class="progress-track" style="margin-left:0;">
+            <div class="progress-fill" style="width: ${pct}%; background-color: var(--accent);"></div>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+    } catch (err) {
+      console.error('Failed to load daily breakdown:', err);
     }
   }
 
@@ -234,29 +291,58 @@
       ctx.fillRect(x1, 4, w, 28);
     });
 
-    // Draw X-axis 3-hour ticks and labels (00:00, 03:00, 06:00, ..., 24:00)
     ctx.font = '10px "JetBrains Mono", monospace, sans-serif';
-    ctx.fillStyle = '#9aa5b5';
     ctx.textAlign = 'center';
 
-    const stepSeconds = 3 * 3600; // 3 hours
-    // Align to the nearest 3-hour boundary
-    const firstTick = Math.ceil(tStart / stepSeconds) * stepSeconds;
+    const isMultiDay = span > 90000;
 
-    for (let t = firstTick; t <= tEnd; t += stepSeconds) {
-      const x = ((t - tStart) / span) * width;
-      if (x < 0 || x > width) continue;
+    if (!isMultiDay) {
+      // Single-day view: show 3-hour interval ticks in local time (00:00, 03:00, ..., 24:00)
+      const startDate = new Date(tStart * 1000);
+      const localDayStart = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0);
 
-      // Small tick line
-      ctx.fillStyle = '#444d5c';
-      ctx.fillRect(x, 34, 1, 4);
+      for (let h = 0; h <= 24; h += 3) {
+        const tickDate = new Date(localDayStart.getFullYear(), localDayStart.getMonth(), localDayStart.getDate(), h, 0, 0);
+        const tickSec = Math.floor(tickDate.getTime() / 1000);
+        const x = ((tickSec - tStart) / span) * width;
 
-      // Label text
-      const d = new Date(t * 1000);
-      const hrs = String(d.getHours()).padStart(2, '0');
-      const mins = String(d.getMinutes()).padStart(2, '0');
-      ctx.fillStyle = '#9aa5b5';
-      ctx.fillText(`${hrs}:${mins}`, x, 48);
+        if (x >= 0 && x <= width) {
+          ctx.fillStyle = '#444d5c';
+          ctx.fillRect(x, 34, 1, 4);
+
+          const hrs = String(tickDate.getHours()).padStart(2, '0');
+          const mins = String(tickDate.getMinutes()).padStart(2, '0');
+          ctx.fillStyle = '#9aa5b5';
+          ctx.fillText(`${hrs}:${mins}`, x, 48);
+        }
+      }
+    } else {
+      // Multi-day view: calculate appropriate day step so labels don't collide
+      const totalDays = Math.ceil(span / 86400);
+      let dayStep = 1;
+      if (totalDays > 30) dayStep = 7;
+      else if (totalDays > 14) dayStep = 3;
+      else if (totalDays > 7) dayStep = 2;
+
+      const startDate = new Date(tStart * 1000);
+      let cur = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate(), 0, 0, 0);
+
+      while (cur.getTime() / 1000 <= tEnd) {
+        const tickSec = Math.floor(cur.getTime() / 1000);
+        const x = ((tickSec - tStart) / span) * width;
+
+        if (x >= 0 && x <= width) {
+          ctx.fillStyle = '#444d5c';
+          ctx.fillRect(x, 34, 1, 4);
+
+          const day = String(cur.getDate()).padStart(2, '0');
+          const mon = String(cur.getMonth() + 1).padStart(2, '0');
+          ctx.fillStyle = '#9aa5b5';
+          ctx.fillText(`${day}/${mon}`, x, 48);
+        }
+
+        cur.setDate(cur.getDate() + dayStep);
+      }
     }
   }
 

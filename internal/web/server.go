@@ -66,6 +66,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/summary", s.handleSummary)
 	mux.HandleFunc("/api/app-titles", s.handleAppTitles)
 	mux.HandleFunc("/api/timeline", s.handleTimeline)
+	mux.HandleFunc("/api/daily", s.handleDaily)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	log.Printf("[web] dashboard listening on http://%s", addr)
@@ -123,6 +124,16 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, timeline)
+}
+
+func (s *Server) handleDaily(w http.ResponseWriter, r *http.Request) {
+	from, to := parseRange(r)
+	daily, err := s.db.GetDailyBreakdown(from, to)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, daily)
 }
 
 func parseRange(r *http.Request) (int64, int64) {

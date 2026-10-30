@@ -32,6 +32,12 @@ type TitleSummary struct {
 	DurationS int64  `json:"duration_s"`
 }
 
+// DailySummary represents total duration aggregated per calendar day.
+type DailySummary struct {
+	Date      string `json:"date"` // formatted "YYYY-MM-DD"
+	DurationS int64  `json:"duration_s"`
+}
+
 // DB wraps SQLite database operations.
 type DB struct {
 	db *sql.DB
@@ -181,6 +187,32 @@ func (d *DB) GetAppTitles(appID string, fromUnix, toUnix int64) ([]TitleSummary,
 	for rows.Next() {
 		var s TitleSummary
 		if err := rows.Scan(&s.Title, &s.DurationS); err != nil {
+			return nil, err
+		}
+		list = append(list, s)
+	}
+	return list, rows.Err()
+}
+
+// GetDailyBreakdown returns aggregated durations grouped by day for a time interval.
+func (d *DB) GetDailyBreakdown(fromUnix, toUnix int64) ([]DailySummary, error) {
+	query := `
+		SELECT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day, SUM(duration_s) AS total_s
+		FROM activities
+		WHERE start_time >= ? AND end_time <= ?
+		GROUP BY day
+		ORDER BY day ASC
+	`
+	rows, err := d.db.Query(query, fromUnix, toUnix)
+	if err != nil {
+		return nil, fmt.Errorf("query daily breakdown: %w", err)
+	}
+	defer rows.Close()
+
+	var list []DailySummary
+	for rows.Next() {
+		var s DailySummary
+		if err := rows.Scan(&s.Date, &s.DurationS); err != nil {
 			return nil, err
 		}
 		list = append(list, s)

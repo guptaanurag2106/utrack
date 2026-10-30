@@ -348,6 +348,38 @@ input[type="date"] {
   white-space: nowrap;
 }
 
+/* Daily Breakdown list */
+.daily-row {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.daily-row:last-child {
+  border-bottom: none;
+}
+
+.daily-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.daily-date {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-main);
+  font-size: 13px;
+}
+
+.daily-duration {
+  font-family: var(--font-mono);
+  color: var(--accent-light);
+  font-size: 13px;
+}
+
 /* Timeline */
 .timeline-section {
   margin-top: 24px;
