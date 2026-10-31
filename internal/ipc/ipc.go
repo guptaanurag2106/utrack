@@ -168,7 +168,10 @@ func findFocused(n *Node) *Node {
 	if n == nil {
 		return nil
 	}
-	if n.Focused && (n.AppID != nil || n.WindowProperties != nil || n.Name != "") {
+	// Only real windows carry an app identity. Requiring it keeps workspace
+	// containers (which have a Name, e.g. "4") out of focus results, so an
+	// empty workspace means "no focus" instead of a phantom app named "4".
+	if n.Focused && ((n.AppID != nil && *n.AppID != "") || n.WindowProperties != nil) {
 		return n
 	}
 	for _, child := range n.Nodes {

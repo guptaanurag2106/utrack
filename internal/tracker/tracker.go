@@ -47,24 +47,10 @@ func (t *Tracker) Heartbeat(now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	gap := now.Sub(t.lastHeartbeat)
-	t.lastHeartbeat = now
-
-	// If wall-clock jumped significantly beyond the interval (e.g. system suspended / slept),
-	// clamp the active window's credit so sleep time isn't falsely attributed to the app.
-	if gap > MaxSleepTolerance {
-		log.Printf("[tracker] system sleep detected (gap: %v). Discarding sleep duration.", gap.Round(time.Second))
-		// Flush only up to 1 heartbeat of active time prior to sleep
-		if t.activeAppID != "" && !t.activeStartTime.IsZero() {
-			preSleepEnd := t.activeStartTime.Add(HeartbeatInterval)
-			if preSleepEnd.Before(now) {
-				t.flushLocked(preSleepEnd)
-			}
-		}
-		// Reset start time to now (post-wake)
-		t.activeStartTime = now
+	if t.detectSleepLocked(now) {
 		return
 	}
+	t.lastHeartbeat = now
 
 	// Normal periodic incremental flush
 	if t.activeAppID != "" && !t.activeStartTime.IsZero() {
@@ -72,10 +58,56 @@ func (t *Tracker) Heartbeat(now time.Time) {
 	}
 }
 
+// detectSleepLocked detects suspend gaps for heartbeat and event-triggered
+// flushes. Calling it on focus/title events too prevents a wake event arriving
+// before the next heartbeat from recording the suspended interval.
+func (t *Tracker) detectSleepLocked(now time.Time) bool {
+	// Sub prefers monotonic timestamps when both values have them. On Linux,
+	// the monotonic clock can stop during suspend, so compare wall-clock
+	// timestamps explicitly to detect the full suspend interval.
+	gap := wallClockElapsed(t.lastHeartbeat, now)
+	if gap <= MaxSleepTolerance {
+		return false
+	}
+
+	log.Printf("[tracker] system sleep detected (gap: %v). Discarding time since last heartbeat.", gap.Round(time.Second))
+	// Only credit time known to have elapsed before suspend: the most recent
+	// heartbeat. Do not estimate another heartbeat interval, which could
+	// include time after the machine actually went to sleep. Round(0) strips
+	// monotonic data so storage uses this wall-clock boundary.
+	if t.activeAppID != "" && !t.activeStartTime.IsZero() {
+		lastKnownAwake := t.lastHeartbeat.Round(0)
+		if wallClockElapsed(t.activeStartTime, lastKnownAwake) > 0 {
+			t.flushLocked(lastKnownAwake)
+		}
+	}
+
+	// A timer that expired during suspend must not later flush a sleep-sized
+	// interval. A fresh title event after wake can schedule a new debounce.
+	if t.debounceTimer != nil {
+		t.debounceTimer.Stop()
+		t.debounceTimer = nil
+		t.pendingTitle = ""
+	}
+
+	// Restart accounting at wake; never credit the suspended interval.
+	t.activeStartTime = now
+	t.lastHeartbeat = now
+	return true
+}
+
+func wallClockElapsed(from, to time.Time) time.Duration {
+	fromWall := time.Unix(from.Unix(), int64(from.Nanosecond()))
+	toWall := time.Unix(to.Unix(), int64(to.Nanosecond()))
+	return toWall.Sub(fromWall)
+}
+
 // OnFocus updates the currently focused window. It flushes the previous interval if one was active.
 func (t *Tracker) OnFocus(appID, title string, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	t.detectSleepLocked(now)
 
 	// Stop any pending title debounce timer
 	if t.debounceTimer != nil {
@@ -108,6 +140,8 @@ func (t *Tracker) OnTitleChange(appID, newTitle string, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	t.detectSleepLocked(now)
+
 	if newTitle == "" || appID != t.activeAppID || newTitle == t.activeTitle {
 		return
 	}
@@ -122,11 +156,15 @@ func (t *Tracker) OnTitleChange(appID, newTitle string, now time.Time) {
 		t.mu.Lock()
 		defer t.mu.Unlock()
 
+		fireTime := time.Now()
+		if t.detectSleepLocked(fireTime) {
+			return
+		}
+
 		if t.pendingTitle == "" || t.pendingTitle == t.activeTitle {
 			return
 		}
 
-		fireTime := time.Now()
 		// Flush current active title interval
 		t.flushLocked(fireTime)
 
@@ -143,6 +181,8 @@ func (t *Tracker) Flush(now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	t.detectSleepLocked(now)
+
 	if t.debounceTimer != nil {
 		t.debounceTimer.Stop()
 		t.debounceTimer = nil
@@ -155,7 +195,7 @@ func (t *Tracker) flushLocked(now time.Time) {
 		return
 	}
 
-	if now.After(t.activeStartTime) {
+	if wallClockElapsed(t.activeStartTime, now) > 0 {
 		if err := t.db.InsertActivity(t.activeAppID, t.activeTitle, t.activeStartTime, now); err != nil {
 			log.Printf("[tracker] error saving activity: %v", err)
 		}

@@ -1,6 +1,8 @@
 package rules_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"utrack/internal/rules"
@@ -28,5 +30,52 @@ func TestDefaultCategorization(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("CategorizeTitle(%q, %q) = %q; want %q", tc.appID, tc.title, got, tc.expected)
 		}
+	}
+}
+
+func TestInvalidJSONKeepsFileAndUsesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgPath := filepath.Join(dir, "utrack", "rules.json")
+	original := "{ not valid json"
+	os.MkdirAll(filepath.Dir(cfgPath), 0755)
+	os.WriteFile(cfgPath, []byte(original), 0644)
+
+	cfg := rules.Load()
+
+	if cfg.CategorizeTitle("firefox", "Videos - YouTube") != "YouTube" {
+		t.Errorf("expected built-in defaults on invalid JSON")
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(data) != original {
+		t.Errorf("rules.json was overwritten:\n got %q\nwant %q", data, original)
+	}
+}
+
+func TestBadPatternDroppedOthersKept(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	const rc = `{"rules":[
+		{"pattern":"[unbalanced", "label":"Broken"},
+		{"pattern":"(?i)youtube music", "label":"YouTube Music"},
+		{"pattern":"(?i)github", "label":"GitHub"}
+	]}`
+	os.MkdirAll(filepath.Join(dir, "utrack"), 0755)
+	os.WriteFile(filepath.Join(dir, "utrack", "rules.json"), []byte(rc), 0644)
+
+	cfg := rules.Load()
+
+	if got := cfg.CategorizeTitle("firefox", "Mix - YouTube Music"); got != "YouTube Music" {
+		t.Errorf("valid rule dropped: got %q", got)
+	}
+	if got := cfg.CategorizeTitle("firefox", "My Dashboard - GitHub"); got != "GitHub" {
+		t.Errorf("valid rule dropped: got %q", got)
+	}
+	if got := cfg.CategorizeTitle("firefox", "whatever title"); got != "whatever title" {
+		t.Errorf("broken rule should not match anything: got %q", got)
 	}
 }

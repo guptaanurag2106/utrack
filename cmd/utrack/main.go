@@ -158,37 +158,59 @@ func runListener(tr *tracker.Tracker) error {
 			if err := json.Unmarshal(payload, &event); err != nil {
 				continue
 			}
-			switch event.Change {
-			case "focus":
-				tr.OnFocus(event.Container.AppName(), event.Container.Name, now)
-			case "title":
-				tr.OnTitleChange(event.Container.AppName(), event.Container.Name, now)
-			case "close":
-				// If a window closed, verify if active window still exists
-				if focused, err := client.GetFocusedWindow(); err == nil && focused != nil {
-					tr.OnFocus(focused.AppName(), focused.Name, now)
-				} else {
-					tr.OnFocus("", "", now)
-				}
-			}
+			dispatchWindowEvent(tr, client, &event, now)
 
 		case ipc.EventWorkspaceMask:
 			var event ipc.WorkspaceEvent
 			if err := json.Unmarshal(payload, &event); err != nil {
 				continue
 			}
-			if event.Change == "focus" {
-				// Empty workspace check: does the workspace contain any focused window container?
-				if event.Current != nil {
-					if focused := ipc.FindFocused(event.Current); focused != nil {
-						tr.OnFocus(focused.AppName(), focused.Name, now)
-					} else {
-						// Empty workspace selected
-						tr.OnFocus("", "", now)
-					}
-				}
-			}
+			dispatchWorkspaceEvent(tr, client, &event, now)
 		}
+	}
+}
+
+// hasWindowIdentity reports whether a node represents a real application
+// window (Wayland app_id or X11 window properties). Workspace and output
+// containers carry neither.
+func hasWindowIdentity(n *ipc.Node) bool {
+	return n != nil && ((n.AppID != nil && *n.AppID != "") || n.WindowProperties != nil)
+}
+
+func dispatchWindowEvent(tr *tracker.Tracker, client *ipc.Client, event *ipc.WindowEvent, now time.Time) {
+	switch event.Change {
+	case "focus":
+		// Defensive: some sway versions emit the workspace container itself for
+		// window events; without an app identity it is fake focus, so pause.
+		if !hasWindowIdentity(&event.Container) {
+			tr.OnFocus("", "", now)
+			return
+		}
+		tr.OnFocus(event.Container.AppName(), event.Container.Name, now)
+	case "title":
+		tr.OnTitleChange(event.Container.AppName(), event.Container.Name, now)
+	case "close":
+		// If a window closed, verify if active window still exists
+		if focused, err := client.GetFocusedWindow(); err == nil && focused != nil {
+			tr.OnFocus(focused.AppName(), focused.Name, now)
+		} else {
+			tr.OnFocus("", "", now)
+		}
+	}
+}
+
+func dispatchWorkspaceEvent(tr *tracker.Tracker, client *ipc.Client, event *ipc.WorkspaceEvent, now time.Time) {
+	if event.Change != "focus" {
+		return
+	}
+	if event.Current == nil {
+		return
+	}
+	if focused := ipc.FindFocused(event.Current); focused != nil {
+		tr.OnFocus(focused.AppName(), focused.Name, now)
+	} else {
+		// Empty workspace selected; flushes previous interval and pauses.
+		tr.OnFocus("", "", now)
 	}
 }
 

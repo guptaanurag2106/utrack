@@ -72,3 +72,116 @@ func TestTrackerTransitions(t *testing.T) {
 		}
 	}
 }
+
+func TestHeartbeatSuspendGapUsesWallClockAndDoesNotSpanSleep(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer db.Close()
+
+	tr := tracker.New(db)
+	base := time.Now()
+	tr.OnFocus("firefox", "Wave File Specifications", base)
+
+	// Normal heartbeat, then a wake 3 hours later. This models the wall-clock
+	// gap observed after suspend; sleep must not appear as one long activity,
+	// nor should the unconfirmed time after the last heartbeat be estimated.
+	tr.Heartbeat(base.Add(tracker.HeartbeatInterval))
+	wake := base.Add(tracker.HeartbeatInterval + 3*time.Hour)
+	tr.Heartbeat(wake)
+
+	rows, err := db.GetTimeline(base.Unix()-1, wake.Unix()+1, 100)
+	if err != nil {
+		t.Fatalf("get timeline: %v", err)
+	}
+	for _, row := range rows {
+		if row.EndTime-row.StartTime > int64(tracker.HeartbeatInterval.Seconds()) {
+			t.Errorf("activity spans suspend: %+v (wall interval %ds)", row, row.EndTime-row.StartTime)
+		}
+		if row.DurationS > int64(tracker.HeartbeatInterval.Seconds()) {
+			t.Errorf("credited more than one heartbeat across suspend: %+v", row)
+		}
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected pre-suspend activity to be flushed")
+	}
+	if len(rows) != 1 || rows[0].EndTime > base.Add(tracker.HeartbeatInterval).Unix() {
+		t.Errorf("unconfirmed time after last heartbeat was credited: %+v", rows)
+	}
+
+	appID, title, started := tr.GetCurrentState()
+	if appID != "firefox" || title != "Wave File Specifications" || !started.Equal(wake) {
+		t.Errorf("post-wake state = (%q, %q, %v), want firefox/title starting at wake %v", appID, title, started, wake)
+	}
+}
+
+func TestFocusEventAfterSuspendCannotFlushSleepDuration(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer db.Close()
+
+	tr := tracker.New(db)
+	base := time.Now()
+	tr.OnFocus("firefox", "Wave File Specifications", base)
+
+	// Model Sway delivering focus before the post-wake heartbeat, including
+	// the same window still being focused when the laptop wakes.
+	wake := base.Add(10 * time.Hour)
+	tr.OnFocus("firefox", "Wave File Specifications", wake)
+	tr.Flush(wake.Add(10 * time.Second))
+
+	rows, err := db.GetTimeline(base.Unix()-1, wake.Unix()+20, 100)
+	if err != nil {
+		t.Fatalf("get timeline: %v", err)
+	}
+	for _, row := range rows {
+		if row.EndTime-row.StartTime > int64(tracker.HeartbeatInterval.Seconds()) {
+			t.Errorf("focus event flushed sleep interval: %+v", row)
+		}
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected bounded pre-suspend or post-wake activity")
+	}
+	if got := rows[len(rows)-1].StartTime; got < wake.Unix() {
+		t.Errorf("post-wake interval began before wake: %d < %d", got, wake.Unix())
+	}
+}
+
+// A pending (debounced) title must not delay or lose time when focus leaves:
+// the whole interval up to the switch gets flushed under the previous title.
+func TestPendingTitleCanceledOnFocusSwitch(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := storage.Open(filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer db.Close()
+
+	tr := tracker.New(db)
+	base := time.Date(2026, 10, 31, 10, 0, 0, 0, time.UTC)
+
+	// Foot focused at T, title change debounced at T+3s (5s timer pending).
+	tr.OnFocus("foot", "zsh", base)
+	tr.OnTitleChange("foot", "nvim main.go", base.Add(3*time.Second))
+
+	// Switch to an empty workspace at T+6s, before the 5s debounce fires at T+8s.
+	tr.OnFocus("", "", base.Add(6*time.Second))
+
+	titles, err := db.GetAppTitles("foot", base.Unix()-10, base.Add(20*time.Second).Unix())
+	if err != nil {
+		t.Fatalf("get titles: %v", err)
+	}
+	total := int64(0)
+	for _, ti := range titles {
+		if ti.Title == "nvim main.go" && ti.DurationS > 0 {
+			t.Errorf("cancelled pending title wrongly recorded: %+v", ti)
+		}
+		total += ti.DurationS
+	}
+	if total != 6 {
+		t.Errorf("expected full 6s under previous title, got %d (%+v)", total, titles)
+	}
+}

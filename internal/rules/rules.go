@@ -2,6 +2,7 @@ package rules
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,26 +51,34 @@ func GetConfigPath() string {
 
 // Load compiles rules from config file, or falls back to DefaultRules.
 // If config file doesn't exist, it creates one with default rules for user convenience.
+// Invalid config content never overwrites the file: the error is logged and
+// built-in defaults are used instead.
 func Load() *Config {
 	cfgPath := GetConfigPath()
 	var cfg Config
 
 	data, err := os.ReadFile(cfgPath)
-	if err == nil {
-		if err := json.Unmarshal(data, &cfg); err == nil && len(cfg.Rules) > 0 {
+	switch {
+	case err == nil:
+		if jErr := json.Unmarshal(data, &cfg); jErr != nil || len(cfg.Rules) == 0 {
+			log.Printf("[rules] %s is empty or invalid (%v); using built-in defaults, file untouched", cfgPath, jErr)
+		} else {
 			compileRules(&cfg)
 			return &cfg
 		}
+	case os.IsNotExist(err):
+		// First run: write template config if directory is writable
+	default:
+		log.Printf("[rules] cannot read %s (%v); using built-in defaults, file untouched", cfgPath, err)
 	}
 
 	// Fallback to default rules
 	cfg.Rules = append([]Rule{}, DefaultRules...)
 	compileRules(&cfg)
 
-	// Attempt to write template config if directory is writable
-	if dir := filepath.Dir(cfgPath); dir != "." {
-		if err := os.MkdirAll(dir, 0755); err == nil {
-			if out, err := json.MarshalIndent(cfg, "", "  "); err == nil {
+	if os.IsNotExist(err) && filepath.Dir(cfgPath) != "." {
+		if mkErr := os.MkdirAll(filepath.Dir(cfgPath), 0755); mkErr == nil {
+			if out, mErr := json.MarshalIndent(cfg, "", "  "); mErr == nil {
 				_ = os.WriteFile(cfgPath, out, 0644)
 			}
 		}
@@ -79,12 +88,25 @@ func Load() *Config {
 }
 
 func compileRules(cfg *Config) {
-	for i := range cfg.Rules {
-		r, err := regexp.Compile(cfg.Rules[i].Pattern)
-		if err == nil {
-			cfg.Rules[i].regex = r
+	kept := cfg.Rules[:0]
+	for _, r := range cfg.Rules {
+		re, err := regexp.Compile(r.Pattern)
+		if err != nil {
+			log.Printf("[rules] dropping rule %q (%s): invalid pattern %q: %v", r.Label, cfgPathLabel(r), r.Pattern, err)
+			continue
 		}
+		r.regex = re
+		kept = append(kept, r)
 	}
+	cfg.Rules = kept
+}
+
+// cfgPathLabel describes where a rule applies (app_id or global).
+func cfgPathLabel(r Rule) string {
+	if r.AppID != "" {
+		return "app " + r.AppID
+	}
+	return "global"
 }
 
 // CategorizeTitle returns the rule label if pattern matches, or original title.
