@@ -150,6 +150,51 @@ func TestFocusEventAfterSuspendCannotFlushSleepDuration(t *testing.T) {
 	}
 }
 
+func TestNestedPauseReasonsExcludeLockedTimeAndResumeOnce(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("failed to open storage: %v", err)
+	}
+	defer db.Close()
+
+	tr := tracker.New(db)
+	base := time.Now()
+	tr.OnFocus("firefox", "Dashboard", base)
+	tr.Pause("idle-lock", base.Add(20*time.Second))
+	tr.Pause("suspend-lock", base.Add(21*time.Second))
+
+	// Focus and heartbeat notifications during a lock must not restart tracking.
+	tr.OnFocus("foot", "terminal", base.Add(50*time.Second))
+	tr.Heartbeat(base.Add(60 * time.Second))
+	if tr.Resume("idle-lock") {
+		t.Fatal("tracking resumed while suspend lock still held")
+	}
+	tr.Heartbeat(base.Add(90 * time.Second))
+	if !tr.Resume("suspend-lock") {
+		t.Fatal("tracking did not resume after final pause was released")
+	}
+	tr.OnFocus("foot", "terminal", base.Add(90*time.Second))
+	tr.Flush(base.Add(100 * time.Second))
+
+	rows, err := db.GetTimeline(base.Unix()-1, base.Add(110*time.Second).Unix(), 100)
+	if err != nil {
+		t.Fatalf("get timeline: %v", err)
+	}
+	var total int64
+	for i, row := range rows {
+		total += row.DurationS
+		if i > 0 && row.StartTime < rows[i-1].EndTime {
+			t.Errorf("overlapping intervals: %+v then %+v", rows[i-1], row)
+		}
+		if row.AppID == "foot" && row.StartTime < base.Add(90*time.Second).Unix() {
+			t.Errorf("locked-period focus was recorded: %+v", row)
+		}
+	}
+	if total != 30 { // 20s before lock + 10s after final unlock
+		t.Errorf("credited %ds, want 30s outside lock", total)
+	}
+}
+
 // A pending (debounced) title must not delay or lose time when focus leaves:
 // the whole interval up to the switch gets flushed under the previous title.
 func TestPendingTitleCanceledOnFocusSwitch(t *testing.T) {

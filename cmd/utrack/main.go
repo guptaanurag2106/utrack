@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,6 +43,8 @@ func main() {
 		runDaemon()
 	case "web":
 		runWeb(os.Args[2:])
+	case "pause", "resume":
+		runTrackerControl(cmd, os.Args[2:])
 	case "status":
 		runStatus()
 	case "clear":
@@ -64,6 +67,8 @@ Usage:
 Commands:
   daemon          Run the background activity tracking daemon
   web [--port P]  Launch the local dashboard web interface (default port: 8080)
+  pause [REASON]  Pause activity tracking (default reason: manual)
+  resume [REASON] Resume activity tracking (default reason: manual)
   status          Show current tracker status and today's summary
   clear [--force] Clear all stored activity logs from the database
   help            Show this help text`)
@@ -166,7 +171,44 @@ func runListener(tr *tracker.Tracker) error {
 				continue
 			}
 			dispatchWorkspaceEvent(tr, client, &event, now)
+
+		case ipc.EventTickMask:
+			var event ipc.TickEvent
+			if err := json.Unmarshal(payload, &event); err != nil {
+				continue
+			}
+			dispatchTickEvent(tr, &event, now)
 		}
+	}
+}
+
+func runTrackerControl(action string, args []string) {
+	if len(args) > 1 {
+		fmt.Fprintf(os.Stderr, "usage: utrack %s [REASON]\n", action)
+		os.Exit(2)
+	}
+	reason := "manual"
+	if len(args) == 1 && args[0] != "" {
+		reason = args[0]
+	}
+	if strings.ContainsAny(reason, ":\n\r") {
+		fmt.Fprintln(os.Stderr, "pause reason cannot contain ':' or newlines")
+		os.Exit(2)
+	}
+	guard, err := lock.Acquire(getLockPath())
+	if err == nil {
+		_ = guard.Release()
+		fmt.Fprintln(os.Stderr, "utrack daemon is not running")
+		os.Exit(1)
+	}
+	client, err := ipc.Connect()
+	if err == nil {
+		defer client.Close()
+		err = client.SendTick("utrack:" + action + ":" + reason)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "utrack %s: %v\n", action, err)
+		os.Exit(1)
 	}
 }
 
@@ -211,6 +253,37 @@ func dispatchWorkspaceEvent(tr *tracker.Tracker, client *ipc.Client, event *ipc.
 	} else {
 		// Empty workspace selected; flushes previous interval and pauses.
 		tr.OnFocus("", "", now)
+	}
+}
+
+func dispatchTickEvent(tr *tracker.Tracker, event *ipc.TickEvent, now time.Time) {
+	parts := strings.Split(event.Payload, ":")
+	if len(parts) != 3 || parts[0] != "utrack" {
+		return
+	}
+	switch parts[1] {
+	case "pause":
+		tr.Pause(parts[2], now)
+	case "resume":
+		if !tr.Resume(parts[2]) {
+			return
+		}
+		client, err := ipc.Connect()
+		if err != nil {
+			log.Printf("[daemon] cannot get focused window after resume: %v", err)
+			tr.OnFocus("", "", now)
+			return
+		}
+		defer client.Close()
+		focused, err := client.GetFocusedWindow()
+		if err != nil || !hasWindowIdentity(focused) {
+			if err != nil {
+				log.Printf("[daemon] cannot get focused window after resume: %v", err)
+			}
+			tr.OnFocus("", "", now)
+			return
+		}
+		tr.OnFocus(focused.AppName(), focused.Name, now)
 	}
 }
 

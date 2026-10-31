@@ -32,6 +32,7 @@ type Tracker struct {
 
 	pendingTitle  string
 	debounceTimer *time.Timer
+	pauses        map[string]struct{}
 }
 
 // New creates a new Tracker instance.
@@ -51,6 +52,9 @@ func (t *Tracker) Heartbeat(now time.Time) {
 		return
 	}
 	t.lastHeartbeat = now
+	if len(t.pauses) > 0 {
+		return
+	}
 
 	// Normal periodic incremental flush
 	if t.activeAppID != "" && !t.activeStartTime.IsZero() {
@@ -108,6 +112,9 @@ func (t *Tracker) OnFocus(appID, title string, now time.Time) {
 	defer t.mu.Unlock()
 
 	t.detectSleepLocked(now)
+	if len(t.pauses) > 0 {
+		return
+	}
 
 	// Stop any pending title debounce timer
 	if t.debounceTimer != nil {
@@ -141,6 +148,9 @@ func (t *Tracker) OnTitleChange(appID, newTitle string, now time.Time) {
 	defer t.mu.Unlock()
 
 	t.detectSleepLocked(now)
+	if len(t.pauses) > 0 {
+		return
+	}
 
 	if newTitle == "" || appID != t.activeAppID || newTitle == t.activeTitle {
 		return
@@ -182,12 +192,61 @@ func (t *Tracker) Flush(now time.Time) {
 	defer t.mu.Unlock()
 
 	t.detectSleepLocked(now)
+	if len(t.pauses) > 0 {
+		return
+	}
 
 	if t.debounceTimer != nil {
 		t.debounceTimer.Stop()
 		t.debounceTimer = nil
 	}
 	t.flushLocked(now)
+}
+
+// Pause stops accounting under a named reason, flushing the active interval
+// only on the first pause. Multiple independent lock/suspend paths can safely
+// overlap by using distinct reasons.
+func (t *Tracker) Pause(reason string, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.detectSleepLocked(now)
+	if reason == "" {
+		reason = "manual"
+	}
+	if t.pauses == nil {
+		t.pauses = make(map[string]struct{})
+	}
+	if _, exists := t.pauses[reason]; exists {
+		return
+	}
+	if len(t.pauses) == 0 {
+		if t.debounceTimer != nil {
+			t.debounceTimer.Stop()
+			t.debounceTimer = nil
+			t.pendingTitle = ""
+		}
+		t.flushLocked(now)
+		t.activeAppID = ""
+		t.activeTitle = ""
+		t.activeStartTime = time.Time{}
+	}
+	t.pauses[reason] = struct{}{}
+}
+
+// Resume removes a named pause and reports whether accounting may resume.
+func (t *Tracker) Resume(reason string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if reason == "" {
+		reason = "manual"
+	}
+	if _, exists := t.pauses[reason]; !exists {
+		return false
+	}
+	delete(t.pauses, reason)
+	return len(t.pauses) == 0
 }
 
 func (t *Tracker) flushLocked(now time.Time) {

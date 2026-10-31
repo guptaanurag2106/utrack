@@ -16,10 +16,12 @@ const (
 	MsgTypeRunCommand = 0
 	MsgTypeSubscribe  = 2
 	MsgTypeGetTree    = 4
+	MsgTypeSendTick   = 10
 
 	// Event window has highest bit set: (1 << 31) | 3 = 0x80000003
 	EventWorkspaceMask = 0x80000000
 	EventWindowMask    = 0x80000003
+	EventTickMask      = 0x80000007
 )
 
 // WindowProperties holds XWayland/X11 window properties if available.
@@ -50,6 +52,12 @@ type WindowEvent struct {
 type WorkspaceEvent struct {
 	Change  string `json:"change"`
 	Current *Node  `json:"current"`
+}
+
+// TickEvent is an application-defined event sent through Sway IPC.
+type TickEvent struct {
+	First   bool   `json:"first"`
+	Payload string `json:"payload"`
 }
 
 // Client represents a connection to Sway IPC.
@@ -130,15 +138,27 @@ func (c *Client) ReadMessage() (uint32, []byte, error) {
 	return respType, payload, nil
 }
 
-// SubscribeEvents sends a subscription request for ["window", "workspace"] events.
+// SubscribeEvents sends a subscription request for window, workspace, and tick events.
 func (c *Client) SubscribeEvents() error {
-	payload := []byte(`["window", "workspace"]`)
+	payload := []byte(`["window", "workspace", "tick"]`)
 	respType, resp, err := c.SendMessage(MsgTypeSubscribe, payload)
 	if err != nil {
 		return err
 	}
 	if respType != MsgTypeSubscribe {
 		return fmt.Errorf("unexpected subscribe response type %d: %s", respType, string(resp))
+	}
+	return nil
+}
+
+// SendTick publishes an application-defined event to subscribed Sway clients.
+func (c *Client) SendTick(payload string) error {
+	respType, resp, err := c.SendMessage(MsgTypeSendTick, []byte(payload))
+	if err != nil {
+		return err
+	}
+	if respType != MsgTypeSendTick {
+		return fmt.Errorf("unexpected send_tick response type %d: %s", respType, string(resp))
 	}
 	return nil
 }
