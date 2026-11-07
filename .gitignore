@@ -10,3 +10,7 @@ sway-timetracker/
 *.db-shm
 *.db-wal
 *.lock
+
+# Internal design notes & dummy data
+/DESIGN.md
+/dummy_data.sql
