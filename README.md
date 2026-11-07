@@ -10,7 +10,9 @@ A lightweight, zero-polling screen time tracking daemon and local web dashboard 
 - **Low Footprint:** Pure Go implementation (~8–15 MB RSS) using zero-CGO SQLite (`modernc.org/sqlite`).
 - **Debounced Titles:** 5-second window title debounce prevents database churn from video timestamps or live doc edits.
 - **Title Categorization:** Group noisy browser tabs and windows into clean categories using regex rules.
-- **On-Demand Local UI:** Pure vanilla HTML5/CSS/Canvas dashboard with collapsible title accordions and dark/light themes.
+- **Lock/Suspend Awareness:** Pauses tracking while the screen is locked (swayidle hooks) and discards wall-clock gaps longer than a threshold (suspend/shutdown) — only genuinely active time is counted.
+- **Empty-Workspace Exclusion:** Focus on an empty workspace counts as no activity.
+- **On-Demand Local UI:** Pure vanilla HTML5/CSS/Canvas dashboard with collapsible title accordions, timeline hover, and day drilldown with dark/light themes.
 - **Single-Instance Safety:** POSIX `flock` prevents multiple concurrent daemons.
 
 ---
@@ -39,14 +41,63 @@ exec utrack daemon
 
 ---
 
+## Lock & Idle Integration (swayidle)
+
+Sway's IPC doesn't broadcast lock/unlock events (`ext-session-lock-v1` is a protocol between the locker and the compositor, not a client-subscribable event), so lock exclusion is done by bracketing `swaylock` with pause/resume hooks. Since `swaylock` stays in the foreground until you unlock (no `-f`), `resume` runs **after** the real unlock — not on mere keyboard input.
+
+Example `~/.config/sway/config`:
+
+```sway
+exec swayidle -w \
+      timeout 300 '(utrack pause idle; swaylock -c 000000; utrack resume idle) &' \
+      timeout 900 'swaymsg "output * dpms off"' \
+      resume 'swaymsg "output * dpms on"' \
+      before-sleep 'utrack pause suspend; playerctl stop; swaylock -c 000000; utrack resume suspend'
+
+# Manual lock keybinding
+bindsym $mod+Escape exec sh -c 'utrack pause manual; swaylock -c 000000; utrack resume manual'
+```
+
+Notes:
+
+- **Do not use `swaylock -f` inside these hooks.** It daemonizes and returns immediately, so `resume idle` would fire before the screen is actually unlocked.
+- The `timeout 300` hook is wrapped in `(...) &` so the pause group runs in the background and doesn't block swayidle; `before-sleep` stays in the foreground.
+- If your `PATH` isn't inherited into swayidle's hooks (e.g. sway started from a login manager), use the absolute binary path (`/home/tanz/go/bin/utrack ...`). Check with `pgrep -af swayidle` — it shows the resolved commands.
+- Long suspends are handled twice: by the `utrack pause suspend` / `resume suspend` hooks and by the daemon's own wall-clock sleep detection (any gap larger than ~90 s between heartbeats is discarded).
+
+---
+
+## How Time Is Accounted For
+
+- **Active time:** flushed each 60 s heartbeat and on every focus/title transition; the 5 s title debounce keeps trailing time on the previous title.
+- **Excluded:** time on an empty workspace, while locked (via the pause hooks above), and suspend/shutdown gaps — a wall-clock gap exceeding 90 s triggers sleep detection, and only time up to the last confirmed heartbeat is credited.
+- **Allowed:** small boundary gaps between intervals (per-second boundary alignment); intervals never overlap.
+
+---
+
 ## CLI Usage
 
 | Command | Description |
 |---|---|
 | `utrack daemon` | Starts background tracking listener |
 | `utrack web [--port 8080]` | Launches local web dashboard |
+| `utrack pause [REASON]` | Pause activity tracking (default reason: `manual`) |
+| `utrack resume [REASON]` | Resume activity tracking (default reason: `manual`) |
 | `utrack status` | CLI summary of today's screen time and daemon state |
 | `utrack clear [--force]` | Purges activity logs and reclaims disk space |
+
+Pause/resume commands talk to the running daemon over Sway IPC tick events and exit with an error if the daemon isn't running.
+
+### Reason semantics
+
+Each pause registers a named reason; each resume removes one. Tracking resumes only when **all** reasons are cleared, so overlapping pauses (e.g. idle lock + suspend) can't accidentally resume tracking early. Reasons cannot contain `:` or newlines.
+
+```bash
+utrack pause lock-screen   # flushes the active interval, stops counting
+utrack pause suspend       # second, independent pause
+utrack resume lock-screen  # still paused (suspend reason active)
+utrack resume suspend      # now fully resumed; re-detects the focused window
+```
 
 ---
 
