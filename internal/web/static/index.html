@@ -54,6 +54,10 @@
         <div class="stat-title">Total Active Time</div>
         <div class="stat-value" id="stat-total-time">—</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-title">Audio & Media</div>
+        <div class="stat-value" id="stat-audio-time">—</div>
+      </div>
       <div class="stat-card" id="card-daily-avg" style="display:none;" title="Total active time divided by calendar days in the selected range">
         <div class="stat-title">Daily Average</div>
         <div class="stat-value" id="stat-daily-avg">—</div>
@@ -78,6 +82,17 @@
         <div style="width:100%; height:180px; position:relative;">
           <canvas id="daily-chart-canvas"></canvas>
         </div>
+      </div>
+    </div>
+
+    <!-- Media & Audio Playback Panel -->
+    <div class="panel" id="media-panel" style="display:none; margin-bottom: 24px;">
+      <div class="panel-header">
+        <span>Audio & Media Playback</span>
+        <span style="font-size:12px; font-weight:normal; color:var(--text-muted);">Background & foreground music, video, and podcasts</span>
+      </div>
+      <div class="panel-body" id="media-list">
+        <div class="empty-state">No media playback recorded for this range.</div>
       </div>
     </div>
 

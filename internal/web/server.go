@@ -68,6 +68,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/timeline", s.handleTimeline)
 	mux.HandleFunc("/api/daily", s.handleDaily)
 	mux.HandleFunc("/api/bounds", s.handleBounds)
+	mux.HandleFunc("/api/media", s.handleMedia)
+	mux.HandleFunc("/api/media-timeline", s.handleMediaTimeline)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	log.Printf("[web] dashboard listening on http://%s", addr)
@@ -144,6 +146,33 @@ func (s *Server) handleBounds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, bounds)
+}
+
+func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
+	from, to := parseRange(r)
+	summary, err := s.db.GetMediaSummary(from, to)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, summary)
+}
+
+func (s *Server) handleMediaTimeline(w http.ResponseWriter, r *http.Request) {
+	from, to := parseRange(r)
+	limit := 1000
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	timeline, err := s.db.GetMediaTimeline(from, to, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, timeline)
 }
 
 func parseRange(r *http.Request) (int64, int64) {

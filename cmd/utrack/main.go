@@ -12,8 +12,11 @@ import (
 	"syscall"
 	"time"
 
+	"context"
 	"utrack/internal/ipc"
 	"utrack/internal/lock"
+	"utrack/internal/mpris"
+	"utrack/internal/rules"
 	"utrack/internal/storage"
 	"utrack/internal/tracker"
 	"utrack/internal/web"
@@ -96,7 +99,19 @@ func runDaemon() {
 	}
 	defer db.Close()
 
+	cfg := rules.Load()
 	tr := tracker.New(db)
+	mediaListener := mpris.New(db, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start MPRIS listener in background
+	go func() {
+		if err := mediaListener.Start(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("[daemon] mpris listener error: %v", err)
+		}
+	}()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -104,7 +119,9 @@ func runDaemon() {
 	go func() {
 		sig := <-sigChan
 		log.Printf("[daemon] caught signal %s, flushing active session...", sig)
+		cancel()
 		tr.Flush(time.Now())
+		mediaListener.Flush(time.Now())
 		_ = db.Close()
 		_ = fileLock.Release()
 		os.Exit(0)
@@ -117,7 +134,9 @@ func runDaemon() {
 	defer ticker.Stop()
 	go func() {
 		for range ticker.C {
-			tr.Heartbeat(time.Now())
+			now := time.Now()
+			tr.Heartbeat(now)
+			mediaListener.Heartbeat(now)
 		}
 	}()
 

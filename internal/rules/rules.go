@@ -16,9 +16,31 @@ type Rule struct {
 	regex   *regexp.Regexp
 }
 
-// Config holds user-defined title grouping rules.
+// MediaRule defines a matching rule for MPRIS media playback.
+type MediaRule struct {
+	Player   string `json:"player,omitempty"`   // e.g. "spotify", "firefox", "mpv"
+	Pattern  string `json:"pattern,omitempty"`  // regex on title or track URL
+	Category string `json:"category"`           // e.g. "Music", "Video", "Podcast"
+	Label    string `json:"label,omitempty"`    // e.g. "YouTube Music", "YouTube"
+	regex    *regexp.Regexp
+}
+
+// Config holds user-defined window title and media grouping rules.
 type Config struct {
-	Rules []Rule `json:"rules"`
+	Rules      []Rule      `json:"rules"`
+	MediaRules []MediaRule `json:"media_rules,omitempty"`
+}
+
+// DefaultMediaRules provides sensible categorization for common audio/video players.
+var DefaultMediaRules = []MediaRule{
+	{Player: "spotify", Category: "Music", Label: "Spotify"},
+	{Player: "firefox", Pattern: `(?i)youtube music`, Category: "Music", Label: "YouTube Music"},
+	{Player: "chromium", Pattern: `(?i)youtube music`, Category: "Music", Label: "YouTube Music"},
+	{Player: "firefox", Pattern: `(?i)youtube`, Category: "Video", Label: "YouTube"},
+	{Player: "chromium", Pattern: `(?i)youtube`, Category: "Video", Label: "YouTube"},
+	{Player: "firefox", Pattern: `(?i)netflix|prime video|plex|twitch`, Category: "Video", Label: "Video Streaming"},
+	{Player: "mpv", Category: "Video", Label: "Local Video"},
+	{Player: "vlc", Category: "Video", Label: "VLC Media"},
 }
 
 // DefaultRules provides sensible defaults for common web & desktop activities.
@@ -63,6 +85,9 @@ func Load() *Config {
 		if jErr := json.Unmarshal(data, &cfg); jErr != nil || len(cfg.Rules) == 0 {
 			log.Printf("[rules] %s is empty or invalid (%v); using built-in defaults, file untouched", cfgPath, jErr)
 		} else {
+			if len(cfg.MediaRules) == 0 {
+				cfg.MediaRules = append([]MediaRule{}, DefaultMediaRules...)
+			}
 			compileRules(&cfg)
 			return &cfg
 		}
@@ -74,6 +99,7 @@ func Load() *Config {
 
 	// Fallback to default rules
 	cfg.Rules = append([]Rule{}, DefaultRules...)
+	cfg.MediaRules = append([]MediaRule{}, DefaultMediaRules...)
 	compileRules(&cfg)
 
 	if os.IsNotExist(err) && filepath.Dir(cfgPath) != "." {
@@ -99,6 +125,20 @@ func compileRules(cfg *Config) {
 		kept = append(kept, r)
 	}
 	cfg.Rules = kept
+
+	keptMedia := cfg.MediaRules[:0]
+	for _, mr := range cfg.MediaRules {
+		if mr.Pattern != "" {
+			re, err := regexp.Compile(mr.Pattern)
+			if err != nil {
+				log.Printf("[rules] dropping media rule (%s/%s): invalid pattern %q: %v", mr.Player, mr.Category, mr.Pattern, err)
+				continue
+			}
+			mr.regex = re
+		}
+		keptMedia = append(keptMedia, mr)
+	}
+	cfg.MediaRules = keptMedia
 }
 
 // cfgPathLabel describes where a rule applies (app_id or global).
@@ -126,4 +166,38 @@ func (c *Config) CategorizeTitle(appID, title string) string {
 		}
 	}
 	return title
+}
+
+// CategorizeMedia maps a player name, title, and optional URL to (category, label).
+// If no rule matches, category defaults to "Media" and label defaults to the title/player.
+func (c *Config) CategorizeMedia(player, title, trackURL string) (category, label string) {
+	category = "Media"
+	label = title
+	if label == "" {
+		label = player
+	}
+	if c == nil {
+		return category, label
+	}
+
+	for _, mr := range c.MediaRules {
+		if mr.Player != "" && mr.Player != player {
+			continue
+		}
+		if mr.regex != nil {
+			if !mr.regex.MatchString(title) && !mr.regex.MatchString(trackURL) {
+				continue
+			}
+		}
+		cat := mr.Category
+		if cat == "" {
+			cat = "Media"
+		}
+		lbl := mr.Label
+		if lbl == "" {
+			lbl = label
+		}
+		return cat, lbl
+	}
+	return category, label
 }

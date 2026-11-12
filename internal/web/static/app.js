@@ -7,8 +7,11 @@
     toDate: null,
     apps: [],
     daily: [],
+    media: [],
+    mediaTimeline: [],
     timeline: [],
     expandedApps: new Set(),
+    expandedMedia: new Set(),
     dailyBarRegions: [],
     autoRefreshTimer: null
   };
@@ -137,16 +140,21 @@
 
   async function loadData() {
     try {
-      const [summaryRes, dailyRes] = await Promise.all([
+      const [summaryRes, dailyRes, mediaRes, mediaTlRes] = await Promise.all([
         fetch(`/api/summary?from=${state.fromUnix}&to=${state.toUnix}`),
-        fetch(`/api/daily?from=${state.fromUnix}&to=${state.toUnix}`)
+        fetch(`/api/daily?from=${state.fromUnix}&to=${state.toUnix}`),
+        fetch(`/api/media?from=${state.fromUnix}&to=${state.toUnix}`),
+        fetch(`/api/media-timeline?from=${state.fromUnix}&to=${state.toUnix}&limit=3000`)
       ]);
       state.apps = await summaryRes.json() || [];
       state.daily = await dailyRes.json() || [];
+      state.media = await mediaRes.json() || [];
+      state.mediaTimeline = await mediaTlRes.json() || [];
 
       renderStats();
       renderAppList();
       renderDailyPanel();
+      renderMediaPanel();
       await loadTimeline();
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -160,6 +168,13 @@
     document.getElementById('stat-total-time').textContent = formatDuration(totalSecs);
     document.getElementById('stat-app-count').textContent = state.apps.length;
     document.getElementById('stat-top-app').textContent = state.apps.length > 0 ? state.apps[0].app_id : '—';
+
+    // Total audio / media playback time
+    const totalMediaSecs = (state.media || []).reduce((sum, m) => sum + m.duration_s, 0);
+    const audioCard = document.getElementById('stat-audio-time');
+    if (audioCard) {
+      audioCard.textContent = formatDuration(totalMediaSecs);
+    }
 
     const isMultiDay = (state.toUnix - state.fromUnix) > 90000;
     const avgCard = document.getElementById('card-daily-avg');
@@ -392,6 +407,86 @@
     };
   }
 
+  // ── Media Panel ──
+
+  function renderMediaPanel() {
+    const panel = document.getElementById('media-panel');
+    const container = document.getElementById('media-list');
+    if (!panel || !container) return;
+
+    if (!state.media || state.media.length === 0) {
+      panel.style.display = 'none';
+      return;
+    }
+    panel.style.display = 'block';
+    container.innerHTML = '';
+
+    // Group media by category (e.g. Music, Video)
+    const catMap = new Map();
+    let totalMediaSecs = 0;
+    for (const m of state.media) {
+      totalMediaSecs += m.duration_s;
+      if (!catMap.has(m.category)) {
+        catMap.set(m.category, { category: m.category, duration_s: 0, items: [] });
+      }
+      const group = catMap.get(m.category);
+      group.duration_s += m.duration_s;
+      group.items.push(m);
+    }
+
+    catMap.forEach((group, catName) => {
+      const pct = Math.round((group.duration_s / (totalMediaSecs || 1)) * 100);
+      const isExpanded = state.expandedMedia.has(catName);
+
+      const item = document.createElement('div');
+      item.className = 'app-item' + (isExpanded ? ' expanded' : '');
+
+      const row = document.createElement('div');
+      row.className = 'app-row';
+      row.innerHTML = `
+        <div class="app-main">
+          <div class="app-title-group">
+            <span class="toggle-icon">▶</span>
+            <span class="app-name">${escapeHtml(catName)}</span>
+          </div>
+          <span class="app-time">${formatDuration(group.duration_s)} (${pct}%)</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" style="width: ${pct}%; background-color: var(--accent);"></div>
+        </div>
+      `;
+
+      const collapse = document.createElement('div');
+      collapse.className = 'app-titles-collapse';
+
+      group.items.forEach(m => {
+        const titleRow = document.createElement('div');
+        titleRow.className = 'title-row';
+        titleRow.innerHTML = `
+          <span class="title-name" title="${escapeHtml(m.title)}">
+            <span class="badge-category">${escapeHtml(m.player_id)}</span>${escapeHtml(m.title)}
+          </span>
+          <span class="title-time">${formatDuration(m.duration_s)}</span>
+        `;
+        collapse.appendChild(titleRow);
+      });
+
+      row.onclick = () => {
+        if (item.classList.contains('expanded')) {
+          item.classList.remove('expanded');
+          state.expandedMedia.delete(catName);
+        } else {
+          item.classList.add('expanded');
+          state.expandedMedia.add(catName);
+        }
+      };
+
+      item.appendChild(row);
+      item.appendChild(collapse);
+      container.appendChild(item);
+    });
+  }
+
   // ── Timeline ──
 
   async function loadTimeline() {
@@ -436,8 +531,18 @@
       const x1 = Math.max(0, ((item.start_time - tStart) / span) * width);
       const x2 = Math.min(width, ((item.end_time - tStart) / span) * width);
       ctx.fillStyle = getAppColor(item.app_id);
-      ctx.fillRect(x1, 4, Math.max(2, x2 - x1), 28);
+      ctx.fillRect(x1, 4, Math.max(2, x2 - x1), 22);
     });
+
+    // Media / Audio ribbon below activity bar (y = 28, height = 4)
+    if (state.mediaTimeline && state.mediaTimeline.length > 0) {
+      state.mediaTimeline.forEach(m => {
+        const x1 = Math.max(0, ((m.start_time - tStart) / span) * width);
+        const x2 = Math.min(width, ((m.end_time - tStart) / span) * width);
+        ctx.fillStyle = m.category === 'Music' ? '#a3be8c' : '#ebcb8b';
+        ctx.fillRect(x1, 28, Math.max(2, x2 - x1), 4);
+      });
+    }
 
     // X-axis labels
     ctx.font = '10px "JetBrains Mono", monospace';

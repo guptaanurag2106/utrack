@@ -38,6 +38,25 @@ type DailySummary struct {
 	DurationS int64  `json:"duration_s"`
 }
 
+// MediaRecord represents a tracked audio/media playback interval.
+type MediaRecord struct {
+	ID        int64  `json:"id"`
+	PlayerID  string `json:"player_id"`
+	Category  string `json:"category"`
+	Title     string `json:"title"`
+	StartTime int64  `json:"start_time"`
+	EndTime   int64  `json:"end_time"`
+	DurationS int64  `json:"duration_s"`
+}
+
+// MediaSummary represents aggregated duration per media category and player.
+type MediaSummary struct {
+	Category  string `json:"category"`
+	PlayerID  string `json:"player_id"`
+	Title     string `json:"title"`
+	DurationS int64  `json:"duration_s"`
+}
+
 // DB wraps SQLite database operations.
 type DB struct {
 	db *sql.DB
@@ -105,6 +124,18 @@ func initSchema(db *sql.DB) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_activities_start ON activities(start_time);
 	CREATE INDEX IF NOT EXISTS idx_activities_app ON activities(app_id);
+
+	CREATE TABLE IF NOT EXISTS media_sessions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		player_id TEXT NOT NULL,
+		category TEXT NOT NULL,
+		title TEXT NOT NULL,
+		start_time INTEGER NOT NULL,
+		end_time INTEGER NOT NULL,
+		duration_s INTEGER NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_media_start ON media_sessions(start_time);
+	CREATE INDEX IF NOT EXISTS idx_media_player ON media_sessions(player_id);
 	`
 	_, err := db.Exec(schema)
 	return err
@@ -112,7 +143,7 @@ func initSchema(db *sql.DB) error {
 
 // TruncateActivities deletes all tracked activity records and vacuums the database.
 func (d *DB) TruncateActivities() error {
-	_, err := d.db.Exec("DELETE FROM activities; VACUUM;")
+	_, err := d.db.Exec("DELETE FROM activities; DELETE FROM media_sessions; VACUUM;")
 	if err != nil {
 		return fmt.Errorf("truncate activities: %w", err)
 	}
@@ -138,6 +169,21 @@ func (d *DB) InsertActivity(appID, title string, start, end time.Time) error {
 	_, err := d.db.Exec(query, appID, title, start.Unix(), end.Unix(), dur)
 	if err != nil {
 		return fmt.Errorf("insert activity (%s, %s): %w", appID, title, err)
+	}
+	return nil
+}
+
+// InsertMedia records a completed audio/media playback interval.
+func (d *DB) InsertMedia(playerID, category, title string, start, end time.Time) error {
+	dur := int64(end.Sub(start).Seconds())
+	if dur <= 0 {
+		return nil
+	}
+
+	query := `INSERT INTO media_sessions (player_id, category, title, start_time, end_time, duration_s) VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := d.db.Exec(query, playerID, category, title, start.Unix(), end.Unix(), dur)
+	if err != nil {
+		return fmt.Errorf("insert media session (%s, %s, %s): %w", playerID, category, title, err)
 	}
 	return nil
 }
@@ -256,6 +302,61 @@ func (d *DB) GetTimeline(fromUnix, toUnix int64, limit int) ([]ActivityRecord, e
 	for rows.Next() {
 		var r ActivityRecord
 		if err := rows.Scan(&r.ID, &r.AppID, &r.Title, &r.StartTime, &r.EndTime, &r.DurationS); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+// GetMediaSummary returns aggregated media durations grouped by category and player.
+func (d *DB) GetMediaSummary(fromUnix, toUnix int64) ([]MediaSummary, error) {
+	query := `
+		SELECT category, player_id, title, SUM(duration_s) AS total_s
+		FROM media_sessions
+		WHERE start_time >= ? AND end_time <= ?
+		GROUP BY category, player_id, title
+		ORDER BY total_s DESC
+	`
+	rows, err := d.db.Query(query, fromUnix, toUnix)
+	if err != nil {
+		return nil, fmt.Errorf("query media summary: %w", err)
+	}
+	defer rows.Close()
+
+	var list []MediaSummary
+	for rows.Next() {
+		var s MediaSummary
+		if err := rows.Scan(&s.Category, &s.PlayerID, &s.Title, &s.DurationS); err != nil {
+			return nil, err
+		}
+		list = append(list, s)
+	}
+	return list, rows.Err()
+}
+
+// GetMediaTimeline returns chronological media events within the given time range.
+func (d *DB) GetMediaTimeline(fromUnix, toUnix int64, limit int) ([]MediaRecord, error) {
+	if limit <= 0 || limit > 5000 {
+		limit = 1000
+	}
+	query := `
+		SELECT id, player_id, category, title, start_time, end_time, duration_s
+		FROM media_sessions
+		WHERE start_time >= ? AND end_time <= ?
+		ORDER BY start_time ASC
+		LIMIT ?
+	`
+	rows, err := d.db.Query(query, fromUnix, toUnix, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query media timeline: %w", err)
+	}
+	defer rows.Close()
+
+	var list []MediaRecord
+	for rows.Next() {
+		var r MediaRecord
+		if err := rows.Scan(&r.ID, &r.PlayerID, &r.Category, &r.Title, &r.StartTime, &r.EndTime, &r.DurationS); err != nil {
 			return nil, err
 		}
 		list = append(list, r)
