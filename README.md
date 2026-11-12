@@ -10,6 +10,7 @@ A lightweight, zero-polling screen time tracking daemon and local web dashboard 
 - **Low Footprint:** Pure Go implementation (~8–15 MB RSS) using zero-CGO SQLite (`modernc.org/sqlite`).
 - **Debounced Titles:** 5-second window title debounce prevents database churn from video timestamps or live doc edits.
 - **Title Categorization:** Group noisy browser tabs and windows into clean categories using regex rules.
+- **Media Tracking:** Listens on D-Bus MPRIS2 to track audio/video playback duration — YouTube, YouTube Music, Spotify, VLC, and more — independently of which window has focus.
 - **Lock/Suspend Awareness:** Pauses tracking while the screen is locked (swayidle hooks) and discards wall-clock gaps longer than a threshold (suspend/shutdown) — only genuinely active time is counted.
 - **Empty-Workspace Exclusion:** Focus on an empty workspace counts as no activity.
 - **On-Demand Local UI:** Pure vanilla HTML5/CSS/Canvas dashboard with collapsible title accordions, timeline hover, and day drilldown with dark/light themes.
@@ -124,18 +125,37 @@ If you prefer managing `utrack` via `systemd`:
 
 - **Database:** `$XDG_DATA_HOME/utrack/utrack.db` (fallback: `~/.local/share/utrack/utrack.db`).
 - **Lock File:** `$XDG_RUNTIME_DIR/utrack.lock` (fallback: `~/.local/share/utrack/utrack.lock`).
-- **Title Rules:** `~/.config/utrack/rules.json`
+- **Rules:** `~/.config/utrack/rules.json`
 
 ### Example `~/.config/utrack/rules.json`:
+
+The config file has two independent sections:
+
+- **`rules`** — regex patterns matched against window titles to group browser tabs and windows into labelled categories.
+- **`media_rules`** — matched against MPRIS player name and playback URL/title to categorize media sessions into `Music` or `Video`.
+
+For `media_rules`, `player` is a substring match against the MPRIS well-known name (e.g. `firefox`, `spotify`, `vlc`). `pattern` is an optional regex matched against the track URL or title — useful to split a browser player (Firefox) into YouTube vs YouTube Music vs Netflix based on the URL the page reports via MPRIS metadata.
+
 ```json
 {
   "rules": [
-    { "pattern": "(?i)youtube music", "label": "YouTube Music" },
-    { "pattern": "(?i)youtube", "label": "YouTube" },
-    { "pattern": "(?i)google( search)?", "label": "Google Search" },
-    { "pattern": "(?i)github", "label": "GitHub" },
-    { "pattern": "(?i)reddit", "label": "Reddit" },
+    { "pattern": "(?i)youtube music", "label": "Music" },
+    { "pattern": "(?i)youtube",        "label": "YouTube" },
+    { "pattern": "(?i)github",         "label": "GitHub" },
+    { "pattern": "(?i)reddit",         "label": "Reddit" },
     { "pattern": "(?i)stack\\s*overflow", "label": "Stack Overflow" }
+  ],
+  "media_rules": [
+    { "player": "spotify",  "category": "Music", "label": "Spotify" },
+    { "player": "firefox",  "pattern": "(?i)music\\.youtube\\.com|youtube music", "category": "Music", "label": "YouTube Music" },
+    { "player": "chromium", "pattern": "(?i)music\\.youtube\\.com|youtube music", "category": "Music", "label": "YouTube Music" },
+    { "player": "firefox",  "pattern": "(?i)youtube\\.com",  "category": "Video", "label": "YouTube" },
+    { "player": "chromium", "pattern": "(?i)youtube\\.com",  "category": "Video", "label": "YouTube" },
+    { "player": "firefox",  "pattern": "(?i)netflix\\.com|primevideo\\.com|plex\\.tv", "category": "Video", "label": "Video Streaming" },
+    { "player": "vlc",      "category": "Video", "label": "VLC Media" },
+    { "player": "mpv",      "category": "Video", "label": "Local Video" }
   ]
 }
 ```
+
+Rules are evaluated top-to-bottom; the first match wins. If no `media_rules` key is present the daemon falls back to built-in defaults.
