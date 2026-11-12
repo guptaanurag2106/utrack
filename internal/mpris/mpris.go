@@ -33,15 +33,17 @@ type Listener struct {
 	db     *storage.DB
 	rules  *rules.Config
 	conn   *dbus.Conn
-	active map[string]*activeStream // keyed by player bus name
+	active map[string]*activeStream // keyed by well-known MPRIS bus name
+	senderMap map[string]string     // maps unique connection (e.g. ":1.46") to well-known name
 }
 
 // New creates a new MPRIS D-Bus listener.
 func New(db *storage.DB, r *rules.Config) *Listener {
 	return &Listener{
-		db:     db,
-		rules:  r,
-		active: make(map[string]*activeStream),
+		db:        db,
+		rules:     r,
+		active:    make(map[string]*activeStream),
+		senderMap: make(map[string]string),
 	}
 }
 
@@ -128,6 +130,12 @@ func (l *Listener) scanExistingPlayers() {
 
 	for _, name := range names {
 		if strings.HasPrefix(name, mprisPrefix) {
+			var owner string
+			if err := l.conn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, name).Store(&owner); err == nil && owner != "" {
+				l.mu.Lock()
+				l.senderMap[owner] = name
+				l.mu.Unlock()
+			}
 			l.checkPlayerState(name)
 		}
 	}
@@ -141,8 +149,18 @@ func (l *Listener) handleSignal(sig *dbus.Signal) {
 		// Args: name, old_owner, new_owner
 		if len(sig.Body) >= 3 {
 			name, ok1 := sig.Body[0].(string)
+			oldOwner, _ := sig.Body[1].(string)
 			newOwner, ok2 := sig.Body[2].(string)
 			if ok1 && ok2 && strings.HasPrefix(name, mprisPrefix) {
+				l.mu.Lock()
+				if oldOwner != "" {
+					delete(l.senderMap, oldOwner)
+				}
+				if newOwner != "" {
+					l.senderMap[newOwner] = name
+				}
+				l.mu.Unlock()
+
 				if newOwner == "" {
 					// Player exited: stop active session
 					l.stopPlayer(name, now)
@@ -154,14 +172,29 @@ func (l *Listener) handleSignal(sig *dbus.Signal) {
 		}
 
 	case propertiesChanged:
-		if strings.HasPrefix(sig.Sender, ":") {
-			// Sender is unique connection name (e.g. ":1.123"). Find matching mpris bus name or inspect sender directly.
-			l.handlePropertiesChanged(sig.Sender, sig.Body, now)
+		busName := sig.Sender
+		l.mu.Lock()
+		if mapped, ok := l.senderMap[sig.Sender]; ok {
+			busName = mapped
 		}
+		l.mu.Unlock()
+
+		if busName == sig.Sender && strings.HasPrefix(sig.Sender, ":") {
+			// Resolve unique name if not cached yet
+			var resolved string
+			if err := l.conn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, sig.Sender).Store(&resolved); err == nil && resolved != "" {
+				l.mu.Lock()
+				l.senderMap[sig.Sender] = resolved
+				busName = resolved
+				l.mu.Unlock()
+			}
+		}
+
+		l.handlePropertiesChanged(busName, sig.Body, now)
 	}
 }
 
-func (l *Listener) handlePropertiesChanged(sender string, body []stringOrInterface, now time.Time) {
+func (l *Listener) handlePropertiesChanged(busName string, body []stringOrInterface, now time.Time) {
 	if len(body) < 2 {
 		return
 	}
@@ -177,7 +210,7 @@ func (l *Listener) handlePropertiesChanged(sender string, body []stringOrInterfa
 		return
 	}
 
-	l.checkPlayerState(sender)
+	l.checkPlayerState(busName)
 }
 
 type stringOrInterface = any
@@ -204,7 +237,14 @@ func (l *Listener) checkPlayerState(busName string) {
 
 	metaVal, err := obj.GetProperty("org.mpris.MediaPlayer2.Player.Metadata")
 	if err == nil {
-		if metaMap, ok := metaVal.Value().(map[string]any); ok {
+		if metaMap, ok := metaVal.Value().(map[string]dbus.Variant); ok {
+			if t, ok := metaMap["xesam:title"].Value().(string); ok {
+				title = t
+			}
+			if u, ok := metaMap["xesam:url"].Value().(string); ok {
+				url = u
+			}
+		} else if metaMap, ok := metaVal.Value().(map[string]any); ok {
 			if t, ok := metaMap["xesam:title"].(string); ok {
 				title = t
 			}
