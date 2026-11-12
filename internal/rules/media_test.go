@@ -19,7 +19,9 @@ func TestCategorizeMedia(t *testing.T) {
 	}{
 		{"spotify", "Pink Floyd - Time", "", "Music", "Spotify"},
 		{"firefox", "Lofi Hip Hop - YouTube Music", "https://music.youtube.com/watch?v=123", "Music", "YouTube Music"},
+		{"firefox", "Song Title - Artist", "https://music.youtube.com/watch?v=abc", "Music", "YouTube Music"},
 		{"firefox", "How to Rice Sway - YouTube", "https://youtube.com/watch?v=abc", "Video", "YouTube"},
+		{"firefox", "Random Video Title", "https://www.youtube.com/watch?v=xyz", "Video", "YouTube"},
 		{"firefox", "Stranger Things - Netflix", "https://netflix.com/watch/123", "Video", "Video Streaming"},
 		{"mpv", "Silicon Valley S01E01.mkv", "", "Video", "Local Video"},
 		{"vlc", "concert.mp4", "", "Video", "VLC Media"},

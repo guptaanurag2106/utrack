@@ -34,10 +34,10 @@ type Config struct {
 // DefaultMediaRules provides sensible categorization for common audio/video players.
 var DefaultMediaRules = []MediaRule{
 	{Player: "spotify", Category: "Music", Label: "Spotify"},
-	{Player: "firefox", Pattern: `(?i)youtube music`, Category: "Music", Label: "YouTube Music"},
-	{Player: "chromium", Pattern: `(?i)youtube music`, Category: "Music", Label: "YouTube Music"},
-	{Player: "firefox", Pattern: `(?i)youtube`, Category: "Video", Label: "YouTube"},
-	{Player: "chromium", Pattern: `(?i)youtube`, Category: "Video", Label: "YouTube"},
+	{Player: "firefox", Pattern: `(?i)music\.youtube\.com|youtube music`, Category: "Music", Label: "YouTube Music"},
+	{Player: "chromium", Pattern: `(?i)music\.youtube\.com|youtube music`, Category: "Music", Label: "YouTube Music"},
+	{Player: "firefox", Pattern: `(?i)youtube\.com|youtube`, Category: "Video", Label: "YouTube"},
+	{Player: "chromium", Pattern: `(?i)youtube\.com|youtube`, Category: "Video", Label: "YouTube"},
 	{Player: "firefox", Pattern: `(?i)netflix|prime video|plex|twitch`, Category: "Video", Label: "Video Streaming"},
 	{Player: "mpv", Category: "Video", Label: "Local Video"},
 	{Player: "vlc", Category: "Video", Label: "VLC Media"},

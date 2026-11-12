@@ -464,7 +464,8 @@
         titleRow.className = 'title-row';
         titleRow.innerHTML = `
           <span class="title-name" title="${escapeHtml(m.title)}">
-            <span class="badge-category">${escapeHtml(m.player_id)}</span>${escapeHtml(m.title)}
+            <span class="badge-category">${escapeHtml(m.player_id)}</span>
+            <span>${escapeHtml(m.title)}</span>
           </span>
           <span class="title-time">${formatDuration(m.duration_s)}</span>
         `;
