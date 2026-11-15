@@ -148,51 +148,8 @@ func initSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_media_start ON media_sessions(start_time);
 	CREATE INDEX IF NOT EXISTS idx_media_player ON media_sessions(player_id);
 	`
-	if _, err := db.Exec(schema); err != nil {
-		return err
-	}
-
-	// Migration: if older table schema with 'category' exists, migrate to (player_id, title, url, ...)
-	var hasCategory bool
-	rows, err := db.Query("PRAGMA table_info(media_sessions)")
-	if err == nil {
-		for rows.Next() {
-			var cid, notnull, pk int
-			var name, ctype string
-			var dflt sql.NullString
-			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil {
-				if name == "category" {
-					hasCategory = true
-				}
-			}
-		}
-		rows.Close()
-	}
-
-	if hasCategory {
-		migration := `
-		CREATE TABLE media_sessions_migrated (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			player_id TEXT NOT NULL,
-			title TEXT NOT NULL,
-			url TEXT NOT NULL DEFAULT '',
-			start_time INTEGER NOT NULL,
-			end_time INTEGER NOT NULL,
-			duration_s INTEGER NOT NULL
-		);
-		INSERT INTO media_sessions_migrated (id, player_id, title, url, start_time, end_time, duration_s)
-		SELECT id, player_id, title, '', start_time, end_time, duration_s FROM media_sessions;
-		DROP TABLE media_sessions;
-		ALTER TABLE media_sessions_migrated RENAME TO media_sessions;
-		CREATE INDEX IF NOT EXISTS idx_media_start ON media_sessions(start_time);
-		CREATE INDEX IF NOT EXISTS idx_media_player ON media_sessions(player_id);
-		`
-		if _, err := db.Exec(migration); err != nil {
-			return fmt.Errorf("migrate media_sessions schema: %w", err)
-		}
-	}
-
-	return nil
+	_, err := db.Exec(schema)
+	return err
 }
 
 // TruncateActivities deletes all tracked activity records and vacuums the database.

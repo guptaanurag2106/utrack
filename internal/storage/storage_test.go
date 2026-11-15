@@ -102,31 +102,3 @@ func TestStorageOperations(t *testing.T) {
 		t.Errorf("expected 0 media items after truncate, got %d", len(clearedMedia))
 	}
 }
-
-func TestMediaSchemaMigration(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "legacy.db")
-
-	// Create legacy database with category column
-	db, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("failed to open storage: %v", err)
-	}
-	db.Close()
-
-	// Reopen should succeed and handle existing schema cleanly
-	db2, err := storage.Open(dbPath)
-	if err != nil {
-		t.Fatalf("failed to reopen storage: %v", err)
-	}
-	defer db2.Close()
-
-	now := time.Now()
-	if err := db2.InsertMedia("spotify", "Song A", "", now.Add(-10*time.Minute), now); err != nil {
-		t.Fatalf("insert media into migrated db failed: %v", err)
-	}
-	raw, err := db2.GetRawMediaSessions(now.Add(-15*time.Minute).Unix(), now.Add(5*time.Minute).Unix())
-	if err != nil || len(raw) != 1 {
-		t.Fatalf("query migrated db failed: %v, len=%d", err, len(raw))
-	}
-}
