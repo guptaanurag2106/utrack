@@ -2,12 +2,16 @@
 
 A lightweight, zero-polling screen time tracking daemon and local web dashboard designed for Sway on Arch Linux.
 
+> [!WARNING]
+> This project is entirely written by AI. It is my first attempt at vibe-coding. I have not read the code in detail,
+> but it has been thoroughly tested and all functionality verified.
+
 ---
 
 ## Features
 
 - **Zero-CPU Polling:** Native Sway IPC event client (`$SWAYSOCK`), waking only on window focus or title transitions.
-- **Low Footprint:** Pure Go implementation (~8–15 MB RSS) using zero-CGO SQLite (`modernc.org/sqlite`).
+- **Low Footprint:** Pure Go implementation (~15-20 MB RSS) using zero-CGO SQLite (`modernc.org/sqlite`).
 - **Debounced Titles:** 5-second window title debounce prevents database churn from video timestamps or live doc edits.
 - **Title Categorization:** Group noisy browser tabs and windows into clean categories using regex rules.
 - **Media Tracking:** Listens on D-Bus MPRIS2 to track audio/video playback duration — YouTube, YouTube Music, Spotify, VLC, and more — independently of which window has focus.
@@ -78,14 +82,14 @@ Notes:
 
 ## CLI Usage
 
-| Command | Description |
-|---|---|
-| `utrack daemon` | Starts background tracking listener |
-| `utrack web [--port 8080]` | Launches local web dashboard |
-| `utrack pause [REASON]` | Pause activity tracking (default reason: `manual`) |
-| `utrack resume [REASON]` | Resume activity tracking (default reason: `manual`) |
-| `utrack status` | CLI summary of today's screen time and daemon state |
-| `utrack clear [--force]` | Purges activity logs and reclaims disk space |
+| Command                    | Description                                         |
+| -------------------------- | --------------------------------------------------- |
+| `utrack daemon`            | Starts background tracking listener                 |
+| `utrack web [--port 8080]` | Launches local web dashboard                        |
+| `utrack pause [REASON]`    | Pause activity tracking (default reason: `manual`)  |
+| `utrack resume [REASON]`   | Resume activity tracking (default reason: `manual`) |
+| `utrack status`            | CLI summary of today's screen time and daemon state |
+| `utrack clear [--force]`   | Purges activity logs and reclaims disk space        |
 
 Pause/resume commands talk to the running daemon over Sway IPC tick events and exit with an error if the daemon isn't running.
 
@@ -117,7 +121,7 @@ If you prefer managing `utrack` via `systemd`:
    systemctl --user enable --now utrack.service
    ```
 
-*(Requires `exec systemctl --user import-environment SWAYSOCK WAYLAND_DISPLAY` in your Sway config).*
+_(Requires `exec systemctl --user import-environment SWAYSOCK WAYLAND_DISPLAY` in your Sway config)._
 
 ---
 
@@ -140,20 +144,45 @@ For `media_rules`, `player` is a substring match against the MPRIS well-known na
 {
   "rules": [
     { "pattern": "(?i)youtube music", "label": "Music" },
-    { "pattern": "(?i)youtube",        "label": "YouTube" },
-    { "pattern": "(?i)github",         "label": "GitHub" },
-    { "pattern": "(?i)reddit",         "label": "Reddit" },
+    { "pattern": "(?i)youtube", "label": "YouTube" },
+    { "pattern": "(?i)github", "label": "GitHub" },
+    { "pattern": "(?i)reddit", "label": "Reddit" },
     { "pattern": "(?i)stack\\s*overflow", "label": "Stack Overflow" }
   ],
   "media_rules": [
-    { "player": "spotify",  "category": "Music", "label": "Spotify" },
-    { "player": "firefox",  "pattern": "(?i)music\\.youtube\\.com|youtube music", "category": "Music", "label": "YouTube Music" },
-    { "player": "chromium", "pattern": "(?i)music\\.youtube\\.com|youtube music", "category": "Music", "label": "YouTube Music" },
-    { "player": "firefox",  "pattern": "(?i)youtube\\.com",  "category": "Video", "label": "YouTube" },
-    { "player": "chromium", "pattern": "(?i)youtube\\.com",  "category": "Video", "label": "YouTube" },
-    { "player": "firefox",  "pattern": "(?i)netflix\\.com|primevideo\\.com|plex\\.tv", "category": "Video", "label": "Video Streaming" },
-    { "player": "vlc",      "category": "Video", "label": "VLC Media" },
-    { "player": "mpv",      "category": "Video", "label": "Local Video" }
+    { "player": "spotify", "category": "Music", "label": "Spotify" },
+    {
+      "player": "firefox",
+      "pattern": "(?i)music\\.youtube\\.com|youtube music",
+      "category": "Music",
+      "label": "YouTube Music"
+    },
+    {
+      "player": "chromium",
+      "pattern": "(?i)music\\.youtube\\.com|youtube music",
+      "category": "Music",
+      "label": "YouTube Music"
+    },
+    {
+      "player": "firefox",
+      "pattern": "(?i)youtube\\.com",
+      "category": "Video",
+      "label": "YouTube"
+    },
+    {
+      "player": "chromium",
+      "pattern": "(?i)youtube\\.com",
+      "category": "Video",
+      "label": "YouTube"
+    },
+    {
+      "player": "firefox",
+      "pattern": "(?i)netflix\\.com|primevideo\\.com|plex\\.tv",
+      "category": "Video",
+      "label": "Video Streaming"
+    },
+    { "player": "vlc", "category": "Video", "label": "VLC Media" },
+    { "player": "mpv", "category": "Video", "label": "Local Video" }
   ]
 }
 ```
