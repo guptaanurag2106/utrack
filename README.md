@@ -6,6 +6,8 @@ A lightweight, zero-polling screen time tracking daemon and local web dashboard 
 > This project is entirely written by AI. It is my first attempt at vibe-coding. I have not read the code in detail,
 > but it has been thoroughly tested and all functionality verified.
 
+![Web UI](./webui.png)
+
 ---
 
 ## Features
