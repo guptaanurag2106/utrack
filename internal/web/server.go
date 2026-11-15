@@ -7,10 +7,12 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"sort"
 	"strconv"
+	"sync"
 	"time"
 
-	"sort"
 	"utrack/internal/rules"
 	"utrack/internal/storage"
 )
@@ -20,9 +22,11 @@ var staticFS embed.FS
 
 // Server hosts the on-demand local dashboard.
 type Server struct {
-	db    *storage.DB
-	rules *rules.Config
-	port  int
+	db       *storage.DB
+	rulesMu  sync.RWMutex
+	rules    *rules.Config
+	rulesMod time.Time
+	port     int
 }
 
 // NewServer initializes a dashboard HTTP server.
@@ -30,24 +34,46 @@ func NewServer(db *storage.DB, port int) *Server {
 	if port <= 0 {
 		port = 8080
 	}
-	return &Server{
+	s := &Server{
 		db:    db,
 		rules: rules.Load(),
 		port:  port,
 	}
+	if fi, err := os.Stat(rules.GetConfigPath()); err == nil {
+		s.rulesMod = fi.ModTime()
+	}
+	return s
 }
 
-// Start begins listening and serving HTTP requests.
-func (s *Server) Start() error {
+func (s *Server) getRules() *rules.Config {
+	cfgPath := rules.GetConfigPath()
+	if fi, err := os.Stat(cfgPath); err == nil {
+		s.rulesMu.RLock()
+		modTime := s.rulesMod
+		s.rulesMu.RUnlock()
+
+		if fi.ModTime().After(modTime) {
+			s.rulesMu.Lock()
+			s.rules = rules.Load()
+			s.rulesMod = fi.ModTime()
+			s.rulesMu.Unlock()
+		}
+	}
+
+	s.rulesMu.RLock()
+	defer s.rulesMu.RUnlock()
+	return s.rules
+}
+
+// Handler returns the configured HTTP handler with all routes registered.
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	sub, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		return fmt.Errorf("sub static fs: %w", err)
+	if err == nil {
+		fileServer := http.FileServer(http.FS(sub))
+		mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
 	}
-
-	fileServer := http.FileServer(http.FS(sub))
-	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -71,9 +97,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/media", s.handleMedia)
 	mux.HandleFunc("/api/media-timeline", s.handleMediaTimeline)
 
+	return mux
+}
+
+// Start begins listening and serving HTTP requests.
+func (s *Server) Start() error {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	log.Printf("[web] dashboard listening on http://%s", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, s.Handler())
 }
 
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
@@ -95,9 +126,10 @@ func (s *Server) handleAppTitles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rCfg := s.getRules()
 	grouped := make(map[string]int64)
 	for _, t := range rawTitles {
-		label := s.rules.CategorizeTitle(appID, t.Title)
+		label := rCfg.CategorizeTitle(appID, t.Title)
 		grouped[label] += t.DurationS
 	}
 
@@ -150,12 +182,40 @@ func (s *Server) handleBounds(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMedia(w http.ResponseWriter, r *http.Request) {
 	from, to := parseRange(r)
-	summary, err := s.db.GetMediaSummary(from, to)
+	rawSessions, err := s.db.GetRawMediaSessions(from, to)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, summary)
+
+	rCfg := s.getRules()
+	type groupKey struct {
+		category string
+		playerID string
+		label    string
+	}
+	grouped := make(map[groupKey]int64)
+
+	for _, m := range rawSessions {
+		cat, label := rCfg.CategorizeMedia(m.PlayerID, m.Title, m.URL)
+		key := groupKey{category: cat, playerID: m.PlayerID, label: label}
+		grouped[key] += m.DurationS
+	}
+
+	result := make([]storage.MediaSummary, 0, len(grouped))
+	for k, dur := range grouped {
+		result = append(result, storage.MediaSummary{
+			Category:  k.category,
+			PlayerID:  k.playerID,
+			Title:     k.label,
+			DurationS: dur,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].DurationS > result[j].DurationS
+	})
+
+	writeJSON(w, result)
 }
 
 func (s *Server) handleMediaTimeline(w http.ResponseWriter, r *http.Request) {
@@ -167,11 +227,27 @@ func (s *Server) handleMediaTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	timeline, err := s.db.GetMediaTimeline(from, to, limit)
+	rawTimeline, err := s.db.GetRawMediaTimeline(from, to, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	rCfg := s.getRules()
+	timeline := make([]storage.MediaRecord, 0, len(rawTimeline))
+	for _, m := range rawTimeline {
+		cat, label := rCfg.CategorizeMedia(m.PlayerID, m.Title, m.URL)
+		timeline = append(timeline, storage.MediaRecord{
+			ID:        m.ID,
+			PlayerID:  m.PlayerID,
+			Category:  cat,
+			Title:     label,
+			StartTime: m.StartTime,
+			EndTime:   m.EndTime,
+			DurationS: m.DurationS,
+		})
+	}
+
 	writeJSON(w, timeline)
 }
 

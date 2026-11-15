@@ -16,7 +16,6 @@ import (
 	"utrack/internal/ipc"
 	"utrack/internal/lock"
 	"utrack/internal/mpris"
-	"utrack/internal/rules"
 	"utrack/internal/storage"
 	"utrack/internal/tracker"
 	"utrack/internal/web"
@@ -99,9 +98,8 @@ func runDaemon() {
 	}
 	defer db.Close()
 
-	cfg := rules.Load()
 	tr := tracker.New(db)
-	mediaListener := mpris.New(db, cfg)
+	mediaListener := mpris.New(db)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

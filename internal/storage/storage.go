@@ -49,6 +49,17 @@ type MediaRecord struct {
 	DurationS int64  `json:"duration_s"`
 }
 
+// RawMediaRecord represents an un-categorized media playback session.
+type RawMediaRecord struct {
+	ID        int64  `json:"id"`
+	PlayerID  string `json:"player_id"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	StartTime int64  `json:"start_time"`
+	EndTime   int64  `json:"end_time"`
+	DurationS int64  `json:"duration_s"`
+}
+
 // MediaSummary represents aggregated duration per media category and player.
 type MediaSummary struct {
 	Category  string `json:"category"`
@@ -128,8 +139,8 @@ func initSchema(db *sql.DB) error {
 	CREATE TABLE IF NOT EXISTS media_sessions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		player_id TEXT NOT NULL,
-		category TEXT NOT NULL,
 		title TEXT NOT NULL,
+		url TEXT NOT NULL DEFAULT '',
 		start_time INTEGER NOT NULL,
 		end_time INTEGER NOT NULL,
 		duration_s INTEGER NOT NULL
@@ -137,8 +148,51 @@ func initSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_media_start ON media_sessions(start_time);
 	CREATE INDEX IF NOT EXISTS idx_media_player ON media_sessions(player_id);
 	`
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+
+	// Migration: if older table schema with 'category' exists, migrate to (player_id, title, url, ...)
+	var hasCategory bool
+	rows, err := db.Query("PRAGMA table_info(media_sessions)")
+	if err == nil {
+		for rows.Next() {
+			var cid, notnull, pk int
+			var name, ctype string
+			var dflt sql.NullString
+			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil {
+				if name == "category" {
+					hasCategory = true
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	if hasCategory {
+		migration := `
+		CREATE TABLE media_sessions_migrated (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			player_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			url TEXT NOT NULL DEFAULT '',
+			start_time INTEGER NOT NULL,
+			end_time INTEGER NOT NULL,
+			duration_s INTEGER NOT NULL
+		);
+		INSERT INTO media_sessions_migrated (id, player_id, title, url, start_time, end_time, duration_s)
+		SELECT id, player_id, title, '', start_time, end_time, duration_s FROM media_sessions;
+		DROP TABLE media_sessions;
+		ALTER TABLE media_sessions_migrated RENAME TO media_sessions;
+		CREATE INDEX IF NOT EXISTS idx_media_start ON media_sessions(start_time);
+		CREATE INDEX IF NOT EXISTS idx_media_player ON media_sessions(player_id);
+		`
+		if _, err := db.Exec(migration); err != nil {
+			return fmt.Errorf("migrate media_sessions schema: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // TruncateActivities deletes all tracked activity records and vacuums the database.
@@ -174,16 +228,16 @@ func (d *DB) InsertActivity(appID, title string, start, end time.Time) error {
 }
 
 // InsertMedia records a completed audio/media playback interval.
-func (d *DB) InsertMedia(playerID, category, title string, start, end time.Time) error {
+func (d *DB) InsertMedia(playerID, title, url string, start, end time.Time) error {
 	dur := int64(end.Sub(start).Seconds())
 	if dur <= 0 {
 		return nil
 	}
 
-	query := `INSERT INTO media_sessions (player_id, category, title, start_time, end_time, duration_s) VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := d.db.Exec(query, playerID, category, title, start.Unix(), end.Unix(), dur)
+	query := `INSERT INTO media_sessions (player_id, title, url, start_time, end_time, duration_s) VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := d.db.Exec(query, playerID, title, url, start.Unix(), end.Unix(), dur)
 	if err != nil {
-		return fmt.Errorf("insert media session (%s, %s, %s): %w", playerID, category, title, err)
+		return fmt.Errorf("insert media session (%s, %s): %w", playerID, title, err)
 	}
 	return nil
 }
@@ -309,39 +363,38 @@ func (d *DB) GetTimeline(fromUnix, toUnix int64, limit int) ([]ActivityRecord, e
 	return list, rows.Err()
 }
 
-// GetMediaSummary returns aggregated media durations grouped by category and player.
-func (d *DB) GetMediaSummary(fromUnix, toUnix int64) ([]MediaSummary, error) {
+// GetRawMediaSessions returns all media sessions within the given time range.
+func (d *DB) GetRawMediaSessions(fromUnix, toUnix int64) ([]RawMediaRecord, error) {
 	query := `
-		SELECT category, player_id, title, SUM(duration_s) AS total_s
+		SELECT id, player_id, title, url, start_time, end_time, duration_s
 		FROM media_sessions
 		WHERE start_time >= ? AND end_time <= ?
-		GROUP BY category, player_id, title
-		ORDER BY total_s DESC
+		ORDER BY start_time ASC
 	`
 	rows, err := d.db.Query(query, fromUnix, toUnix)
 	if err != nil {
-		return nil, fmt.Errorf("query media summary: %w", err)
+		return nil, fmt.Errorf("query raw media sessions: %w", err)
 	}
 	defer rows.Close()
 
-	var list []MediaSummary
+	var list []RawMediaRecord
 	for rows.Next() {
-		var s MediaSummary
-		if err := rows.Scan(&s.Category, &s.PlayerID, &s.Title, &s.DurationS); err != nil {
+		var r RawMediaRecord
+		if err := rows.Scan(&r.ID, &r.PlayerID, &r.Title, &r.URL, &r.StartTime, &r.EndTime, &r.DurationS); err != nil {
 			return nil, err
 		}
-		list = append(list, s)
+		list = append(list, r)
 	}
 	return list, rows.Err()
 }
 
-// GetMediaTimeline returns chronological media events within the given time range.
-func (d *DB) GetMediaTimeline(fromUnix, toUnix int64, limit int) ([]MediaRecord, error) {
+// GetRawMediaTimeline returns chronological raw media events within the given time range.
+func (d *DB) GetRawMediaTimeline(fromUnix, toUnix int64, limit int) ([]RawMediaRecord, error) {
 	if limit <= 0 || limit > 5000 {
 		limit = 1000
 	}
 	query := `
-		SELECT id, player_id, category, title, start_time, end_time, duration_s
+		SELECT id, player_id, title, url, start_time, end_time, duration_s
 		FROM media_sessions
 		WHERE start_time >= ? AND end_time <= ?
 		ORDER BY start_time ASC
@@ -349,14 +402,14 @@ func (d *DB) GetMediaTimeline(fromUnix, toUnix int64, limit int) ([]MediaRecord,
 	`
 	rows, err := d.db.Query(query, fromUnix, toUnix, limit)
 	if err != nil {
-		return nil, fmt.Errorf("query media timeline: %w", err)
+		return nil, fmt.Errorf("query raw media timeline: %w", err)
 	}
 	defer rows.Close()
 
-	var list []MediaRecord
+	var list []RawMediaRecord
 	for rows.Next() {
-		var r MediaRecord
-		if err := rows.Scan(&r.ID, &r.PlayerID, &r.Category, &r.Title, &r.StartTime, &r.EndTime, &r.DurationS); err != nil {
+		var r RawMediaRecord
+		if err := rows.Scan(&r.ID, &r.PlayerID, &r.Title, &r.URL, &r.StartTime, &r.EndTime, &r.DurationS); err != nil {
 			return nil, err
 		}
 		list = append(list, r)

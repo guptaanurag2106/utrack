@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/godbus/dbus/v5"
-	"utrack/internal/rules"
 	"utrack/internal/storage"
 )
 
@@ -22,26 +21,24 @@ const (
 // activeStream holds state for an active playback stream.
 type activeStream struct {
 	player    string
-	category  string
-	label     string
+	title     string
+	url       string
 	startTime time.Time
 }
 
 // Listener monitors MPRIS D-Bus interfaces and records audio playback intervals.
 type Listener struct {
-	mu     sync.Mutex
-	db     *storage.DB
-	rules  *rules.Config
-	conn   *dbus.Conn
-	active map[string]*activeStream // keyed by well-known MPRIS bus name
-	senderMap map[string]string     // maps unique connection (e.g. ":1.46") to well-known name
+	mu        sync.Mutex
+	db        *storage.DB
+	conn      *dbus.Conn
+	active    map[string]*activeStream // keyed by well-known MPRIS bus name
+	senderMap map[string]string        // maps unique connection (e.g. ":1.46") to well-known name
 }
 
 // New creates a new MPRIS D-Bus listener.
-func New(db *storage.DB, r *rules.Config) *Listener {
+func New(db *storage.DB) *Listener {
 	return &Listener{
 		db:        db,
-		rules:     r,
 		active:    make(map[string]*activeStream),
 		senderMap: make(map[string]string),
 	}
@@ -97,7 +94,7 @@ func (l *Listener) Flush(now time.Time) {
 
 	for busName, stream := range l.active {
 		if stream != nil && !stream.startTime.IsZero() && now.After(stream.startTime) {
-			if err := l.db.InsertMedia(stream.player, stream.category, stream.label, stream.startTime, now); err != nil {
+			if err := l.db.InsertMedia(stream.player, stream.title, stream.url, stream.startTime, now); err != nil {
 				log.Printf("[mpris] error flushing media interval: %v", err)
 			}
 		}
@@ -112,7 +109,7 @@ func (l *Listener) Heartbeat(now time.Time) {
 
 	for _, stream := range l.active {
 		if stream != nil && !stream.startTime.IsZero() && now.After(stream.startTime) {
-			if err := l.db.InsertMedia(stream.player, stream.category, stream.label, stream.startTime, now); err != nil {
+			if err := l.db.InsertMedia(stream.player, stream.title, stream.url, stream.startTime, now); err != nil {
 				log.Printf("[mpris] error on heartbeat media flush: %v", err)
 			}
 			stream.startTime = now
@@ -255,27 +252,26 @@ func (l *Listener) checkPlayerState(busName string) {
 	}
 
 	cleanPlayer := cleanPlayerName(busName)
-	cat, label := l.rules.CategorizeMedia(cleanPlayer, title, url)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	cur := l.active[busName]
-	if cur != nil && cur.label == label && cur.category == cat {
+	if cur != nil && cur.title == title && cur.url == url {
 		// Same track/stream continues
 		return
 	}
 
 	// Flush previous track if running
 	if cur != nil && !cur.startTime.IsZero() && now.After(cur.startTime) {
-		_ = l.db.InsertMedia(cur.player, cur.category, cur.label, cur.startTime, now)
+		_ = l.db.InsertMedia(cur.player, cur.title, cur.url, cur.startTime, now)
 	}
 
 	// Begin new playback interval
 	l.active[busName] = &activeStream{
 		player:    cleanPlayer,
-		category:  cat,
-		label:     label,
+		title:     title,
+		url:       url,
 		startTime: now,
 	}
 }
@@ -287,7 +283,7 @@ func (l *Listener) stopPlayer(busName string, now time.Time) {
 	cur := l.active[busName]
 	if cur != nil {
 		if !cur.startTime.IsZero() && now.After(cur.startTime) {
-			_ = l.db.InsertMedia(cur.player, cur.category, cur.label, cur.startTime, now)
+			_ = l.db.InsertMedia(cur.player, cur.title, cur.url, cur.startTime, now)
 		}
 		delete(l.active, busName)
 	}
