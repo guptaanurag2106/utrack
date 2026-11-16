@@ -67,9 +67,9 @@ Usage:
   utrack <command> [options]
 
 Commands:
-  daemon          Run the background activity tracking daemon
-  web [--port P]  Launch the local dashboard web interface (default port: 8080)
-  pause [REASON]  Pause activity tracking (default reason: manual)
+  daemon                    Run the background activity tracking daemon
+  web [--port P] [--no-open] Launch the local dashboard web interface (default port: 8080)
+  pause [REASON]            Pause activity tracking (default reason: manual)
   resume [REASON] Resume activity tracking (default reason: manual)
   status          Show current tracker status and today's summary
   clear [--force] Clear all stored activity logs from the database
@@ -307,6 +307,8 @@ func dispatchTickEvent(tr *tracker.Tracker, event *ipc.TickEvent, now time.Time)
 func runWeb(args []string) {
 	fs := flag.NewFlagSet("web", flag.ExitOnError)
 	port := fs.Int("port", 8080, "HTTP dashboard port")
+	noOpen := fs.Bool("no-open", false, "Do not auto-open browser")
+	fs.BoolVar(noOpen, "n", false, "Do not auto-open browser (shorthand)")
 	_ = fs.Parse(args)
 
 	dbPath, err := storage.GetDefaultDBPath()
@@ -321,7 +323,7 @@ func runWeb(args []string) {
 	defer db.Close()
 
 	srv := web.NewServer(db, *port)
-	if err := srv.Start(); err != nil {
+	if err := srv.Start(!*noOpen); err != nil {
 		log.Fatalf("[web] server failed: %v", err)
 	}
 }

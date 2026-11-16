@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"sync"
@@ -100,11 +102,32 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// Start begins listening and serving HTTP requests.
-func (s *Server) Start() error {
+// Start begins listening and serving HTTP requests, optionally opening the default browser.
+func (s *Server) Start(autoOpen bool) error {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
-	log.Printf("[web] dashboard listening on http://%s", addr)
-	return http.ListenAndServe(addr, s.Handler())
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
+	targetURL := fmt.Sprintf("http://%s", addr)
+	log.Printf("[web] dashboard listening on %s", targetURL)
+
+	if autoOpen {
+		go openBrowser(targetURL)
+	}
+
+	return http.Serve(ln, s.Handler())
+}
+
+func openBrowser(targetURL string) {
+	if browser := os.Getenv("BROWSER"); browser != "" {
+		if err := exec.Command(browser, targetURL).Start(); err == nil {
+			return
+		}
+	}
+	_ = exec.Command("xdg-open", targetURL).Start()
 }
 
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {

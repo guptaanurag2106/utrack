@@ -32,7 +32,7 @@ It tracks active focused applications and window titles with zero CPU polling vi
 5. **Binary Layout:**
    - Unified single CLI:
      - `utrack daemon`: Runs the background listener and records intervals into SQLite.
-     - `utrack web [--port 8080]`: On-demand local web server with embedded UI. Exits on `Ctrl+C`.
+     - `utrack web [--port 8080] [--no-open]`: On-demand local web server with embedded UI. Auto-opens default browser. Exits on `Ctrl+C`.
      - `utrack pause [REASON]`: Pauses activity tracking under a named reason.
      - `utrack resume [REASON]`: Resumes activity tracking when all reasons clear.
      - `utrack status`: Quick CLI status check (daemon running/stopped, current active window).

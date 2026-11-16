@@ -87,7 +87,7 @@ Notes:
 | Command                    | Description                                         |
 | -------------------------- | --------------------------------------------------- |
 | `utrack daemon`            | Starts background tracking listener                 |
-| `utrack web [--port 8080]` | Launches local web dashboard                        |
+| `utrack web [--port 8080] [--no-open]` | Launches local dashboard and auto-opens default browser |
 | `utrack pause [REASON]`    | Pause activity tracking (default reason: `manual`)  |
 | `utrack resume [REASON]`   | Resume activity tracking (default reason: `manual`) |
 | `utrack status`            | CLI summary of today's screen time and daemon state |
